@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist-electron",
+    "rootDir": "src",
+    "noEmit": false,
+    "jsx": "react-jsx"
+  },
+  "include": ["src/main", "src/shared", "src/stolow"]
+}
