@@ -51,6 +51,8 @@ export interface GenerateSuggestionsPayload {
   documentText: string;
   cursorPosition: number;
   selection: EditorSelectionSnapshot;
+  includeSummary?: boolean;
+  includeNotes?: boolean;
   mode: SuggestionMode;
   modelProfile: ModelProfile;
   settings: StolowSettings;

@@ -1,8 +1,12 @@
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Compartment, EditorSelection } from "@codemirror/state";
 import { EditorView, basicSetup } from "codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import type { EditorSelectionSnapshot } from "../../shared/types";
+
+export interface MarkdownEditorHandle {
+  applyChange: (spec: { from: number; to: number; insert: string; selection: EditorSelectionSnapshot }) => void;
+}
 
 interface MarkdownEditorProps {
   editable: boolean;
@@ -12,19 +16,40 @@ interface MarkdownEditorProps {
   value: string;
 }
 
-export function MarkdownEditor({
-  editable,
-  onChange,
-  onSelectionChange,
-  selection,
-  value
-}: MarkdownEditorProps): JSX.Element {
+export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(function MarkdownEditor(
+  { editable, onChange, onSelectionChange, selection, value }: MarkdownEditorProps,
+  ref
+): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const editableCompartmentRef = useRef(new Compartment());
   const onChangeRef = useRef(onChange);
   const onSelectionChangeRef = useRef(onSelectionChange);
   const editableRef = useRef(editable);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      applyChange: ({ from, to, insert, selection: nextSelection }): void => {
+        const view = viewRef.current;
+        if (!view) return;
+        const docLen = view.state.doc.length;
+        const clamp = (pos: number): number => Math.max(0, Math.min(pos, docLen));
+        const safeFrom = clamp(from);
+        const safeTo = clamp(to);
+        const head = clamp(nextSelection.head);
+        const anchor = clamp(nextSelection.from);
+        view.dispatch({
+          changes: { from: safeFrom, to: safeTo, insert },
+          selection: EditorSelection.range(anchor, head),
+          scrollIntoView: true,
+          userEvent: "stolow.ai.apply"
+        });
+        view.focus();
+      }
+    }),
+    []
+  );
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -122,4 +147,4 @@ export function MarkdownEditor({
   }, [value, selection]);
 
   return <div className="editor-host" ref={hostRef} />;
-}
+});

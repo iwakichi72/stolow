@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { InputHTMLAttributes } from "react";
 import {
   AlertCircle,
@@ -26,7 +26,7 @@ import type {
   SuggestionMode
 } from "../shared/types";
 import { MODEL_PROFILES, SUGGESTION_MODES } from "../shared/types";
-import { MarkdownEditor } from "./components/MarkdownEditor";
+import { MarkdownEditor, type MarkdownEditorHandle } from "./components/MarkdownEditor";
 
 const MODE_LABELS: Record<SuggestionMode, string> = {
   natural: "Natural",
@@ -93,6 +93,8 @@ export function App(): JSX.Element {
   const [documentText, setDocumentText] = useState("");
   const [lastSavedText, setLastSavedText] = useState("");
   const [selection, setSelection] = useState<EditorSelectionSnapshot>(EMPTY_SELECTION);
+  const [includeSummary, setIncludeSummary] = useState(true);
+  const [includeNotes, setIncludeNotes] = useState(true);
   const [mode, setMode] = useState<SuggestionMode>("natural");
   const [modelProfile, setModelProfile] = useState<ModelProfile>("default");
   const [settingsDraft, setSettingsDraft] = useState<StolowSettings | null>(null);
@@ -113,6 +115,14 @@ export function App(): JSX.Element {
   const [aiPanelOpen, setAiPanelOpen] = useState(() =>
     readStoredBoolean(LAYOUT_STORAGE_KEYS.aiPanelOpen, true)
   );
+  const editorRef = useRef<MarkdownEditorHandle | null>(null);
+  const [previewPlan, setPreviewPlan] = useState<null | {
+    title: string;
+    kindLabel: string;
+    beforeText: string;
+    afterText: string;
+    change: { from: number; to: number; insert: string; selection: EditorSelectionSnapshot };
+  }>(null);
 
   const isDirty = activeFile !== null && documentText !== lastSavedText;
   const selectedChars = selection.to > selection.from ? selection.to - selection.from : 0;
@@ -286,6 +296,8 @@ export function App(): JSX.Element {
         documentText,
         cursorPosition: target.head,
         selection: target,
+        includeSummary,
+        includeNotes,
         mode,
         modelProfile,
         settings: settingsDraft
@@ -300,43 +312,81 @@ export function App(): JSX.Element {
     } finally {
       setIsGenerating(false);
     }
-  }, [activeFile, documentText, mode, modelProfile, project, selection, settingsDraft]);
+  }, [
+    activeFile,
+    documentText,
+    includeNotes,
+    includeSummary,
+    mode,
+    modelProfile,
+    project,
+    selection,
+    settingsDraft
+  ]);
 
-  const applySuggestion = useCallback(
-    (candidate: SuggestionCandidate): void => {
+  const buildApplyPlan = useCallback(
+    (candidate: SuggestionCandidate) => {
       const target = generationTarget ?? selection;
       const cleanText = candidate.text.trim();
-      if (!cleanText) {
-        setPanelError("候補が空です。");
-        return;
-      }
+      if (!cleanText) return null;
 
       if (suggestionResult?.kind === "rewrite" && target.to > target.from) {
-        const nextText = `${documentText.slice(0, target.from)}${cleanText}${documentText.slice(target.to)}`;
-        setDocumentText(nextText);
-        setSelection({
+        const nextSelection: EditorSelectionSnapshot = {
           from: target.from,
           to: target.from + cleanText.length,
           head: target.from + cleanText.length,
           selectedText: cleanText
-        });
-        setStatusMessage("選択範囲を候補で置き換えました。必要なら上書き保存してください。");
-        return;
+        };
+        return {
+          title: candidate.title,
+          kindLabel: "リライト（置き換え）",
+          beforeText: documentText.slice(target.from, target.to),
+          afterText: cleanText,
+          change: { from: target.from, to: target.to, insert: cleanText, selection: nextSelection }
+        };
       }
 
       const insertion = formatParagraphInsertion(documentText, target.head, cleanText);
-      const nextText = `${documentText.slice(0, target.head)}${insertion}${documentText.slice(target.head)}`;
       const head = target.head + insertion.length;
-      setDocumentText(nextText);
-      setSelection({
+      const nextSelection: EditorSelectionSnapshot = {
         from: head,
         to: head,
         head,
         selectedText: ""
-      });
-      setStatusMessage("候補を本文に反映しました。必要なら上書き保存してください。");
+      };
+
+      const contextBefore = documentText.slice(Math.max(0, target.head - 220), target.head);
+      const contextAfter = documentText.slice(target.head, Math.min(documentText.length, target.head + 220));
+      const beforeText = `${contextBefore}[挿入位置]${contextAfter}`;
+
+      return {
+        title: candidate.title,
+        kindLabel: "次段落（挿入）",
+        beforeText,
+        afterText: insertion,
+        change: { from: target.head, to: target.head, insert: insertion, selection: nextSelection }
+      };
     },
     [documentText, generationTarget, selection, suggestionResult?.kind]
+  );
+
+  const applySuggestion = useCallback(
+    (candidate: SuggestionCandidate): void => {
+      const plan = buildApplyPlan(candidate);
+      if (!plan) {
+        setPanelError("候補が空です。");
+        return;
+      }
+
+      const editor = editorRef.current;
+      if (!editor) {
+        setPanelError("エディタが初期化されていません。");
+        return;
+      }
+      editor.applyChange(plan.change);
+      setStatusMessage("候補を本文に反映しました。必要なら上書き保存してください。");
+    },
+    [buildApplyPlan]
   );
 
   useEffect(() => {
@@ -525,6 +575,7 @@ export function App(): JSX.Element {
           </div>
         </div>
         <MarkdownEditor
+          ref={editorRef}
           value={documentText}
           onChange={setDocumentText}
           onSelectionChange={setSelection}
@@ -556,6 +607,14 @@ export function App(): JSX.Element {
             mode={mode}
             modelProfile={modelProfile}
             onApply={applySuggestion}
+            onPreview={(candidate) => {
+              const plan = buildApplyPlan(candidate);
+              if (!plan) {
+                setPanelError("候補が空です。");
+                return;
+              }
+              setPreviewPlan(plan);
+            }}
             onClose={() => setAiPanelOpen(false)}
             onGenerate={generate}
             onModeChange={(nextMode) => {
@@ -566,6 +625,10 @@ export function App(): JSX.Element {
             }}
             onModelProfileChange={setModelProfile}
             onSettingsChange={updateSettingsField}
+            includeNotes={includeNotes}
+            includeSummary={includeSummary}
+            onIncludeNotesChange={setIncludeNotes}
+            onIncludeSummaryChange={setIncludeSummary}
             result={suggestionResult}
             rightPanelWidth={rightPanelWidth}
             selectedChars={selectedChars}
@@ -584,6 +647,59 @@ export function App(): JSX.Element {
           AI
         </button>
       )}
+      {previewPlan ? (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="候補プレビュー"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPreviewPlan(null);
+          }}
+        >
+          <div className="modal">
+            <div className="modal-header">
+              <div>
+                <h3>{previewPlan.title}</h3>
+                <p>{previewPlan.kindLabel}</p>
+              </div>
+              <div className="modal-actions">
+                <button className="icon-button" onClick={() => setPreviewPlan(null)} type="button">
+                  <X aria-hidden size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="modal-grid">
+              <section className="modal-pane">
+                <h4>Before</h4>
+                <pre>{previewPlan.beforeText}</pre>
+              </section>
+              <section className="modal-pane">
+                <h4>After</h4>
+                <pre>{previewPlan.afterText}</pre>
+              </section>
+            </div>
+            <div className="modal-footer">
+              <button className="chip" onClick={() => setPreviewPlan(null)} type="button">
+                閉じる
+              </button>
+              <button
+                className="primary-action"
+                onClick={() => {
+                  const editor = editorRef.current;
+                  if (!editor) return;
+                  editor.applyChange(previewPlan.change);
+                  setPreviewPlan(null);
+                  setStatusMessage("候補を本文に反映しました。必要なら上書き保存してください。");
+                }}
+                type="button"
+              >
+                本文に反映
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -782,11 +898,16 @@ interface SuggestionPanelProps {
   error: string | null;
   expectedSuggestionCount: number;
   isGenerating: boolean;
+  includeNotes: boolean;
+  includeSummary: boolean;
   mode: SuggestionMode;
   modelProfile: ModelProfile;
   onApply: (candidate: SuggestionCandidate) => void;
+  onPreview: (candidate: SuggestionCandidate) => void;
   onClose: () => void;
   onGenerate: () => void;
+  onIncludeNotesChange: (value: boolean) => void;
+  onIncludeSummaryChange: (value: boolean) => void;
   onModeChange: (mode: SuggestionMode) => void;
   onModelProfileChange: (profile: ModelProfile) => void;
   onSettingsChange: <K extends keyof StolowSettings>(field: K, value: StolowSettings[K]) => void;
@@ -801,11 +922,16 @@ function SuggestionPanel({
   error,
   expectedSuggestionCount,
   isGenerating,
+  includeNotes,
+  includeSummary,
   mode,
   modelProfile,
   onApply,
+  onPreview,
   onClose,
   onGenerate,
+  onIncludeNotesChange,
+  onIncludeSummaryChange,
   onModeChange,
   onModelProfileChange,
   onSettingsChange,
@@ -861,6 +987,28 @@ function SuggestionPanel({
             </button>
           ))}
         </div>
+      </fieldset>
+
+      <fieldset className="control-block control-fieldset">
+        <legend className="control-legend">参照コンテキスト</legend>
+        <label className="toggle-row">
+          <input
+            checked={includeSummary}
+            disabled={controlsLocked}
+            onChange={(event) => onIncludeSummaryChange(event.target.checked)}
+            type="checkbox"
+          />
+          <span>Summary（context/summary.md）</span>
+        </label>
+        <label className="toggle-row">
+          <input
+            checked={includeNotes}
+            disabled={controlsLocked}
+            onChange={(event) => onIncludeNotesChange(event.target.checked)}
+            type="checkbox"
+          />
+          <span>Notes（context/notes.md）</span>
+        </label>
       </fieldset>
 
       <fieldset className="control-block control-fieldset">
@@ -963,9 +1111,14 @@ function SuggestionPanel({
           <article className="suggestion-card" key={candidate.id}>
             <div className="suggestion-title">
               <span>{candidate.title}</span>
-              <button disabled={isGenerating} onClick={() => onApply(candidate)} type="button">
-                本文に反映
-              </button>
+              <div className="suggestion-actions">
+                <button disabled={isGenerating} onClick={() => onPreview(candidate)} type="button">
+                  プレビュー
+                </button>
+                <button disabled={isGenerating} onClick={() => onApply(candidate)} type="button">
+                  本文に反映
+                </button>
+              </div>
             </div>
             <p className="suggestion-body">{candidate.text}</p>
           </article>

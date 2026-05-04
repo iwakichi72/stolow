@@ -168,9 +168,12 @@ function registerIpcHandlers(): void {
           throw new StolowAiError("PROJECT_NOT_OPEN", "Project is not open.");
         }
 
+        const includeSummary = payload.includeSummary !== false;
+        const includeNotes = payload.includeNotes !== false;
+
         const [summaryText, notesText] = await Promise.all([
-          readOptionalProjectFile(payload.projectPath, "context/summary.md"),
-          readOptionalProjectFile(payload.projectPath, "context/notes.md")
+          includeSummary ? readOptionalProjectFile(payload.projectPath, "context/summary.md") : Promise.resolve(""),
+          includeNotes ? readOptionalProjectFile(payload.projectPath, "context/notes.md") : Promise.resolve("")
         ]);
 
         return await generateSuggestions({
