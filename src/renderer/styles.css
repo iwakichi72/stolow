@@ -65,7 +65,7 @@
 
 body {
   margin: 0;
-  min-width: 980px;
+  min-width: 0;
   min-height: 640px;
   overflow: hidden;
   background: var(--bg);
@@ -78,6 +78,22 @@ input {
 
 button {
   cursor: pointer;
+  touch-action: manipulation;
+}
+
+button:focus-visible,
+input:focus-visible,
+summary:focus-visible,
+.file-row:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+button:focus:not(:focus-visible),
+input:focus:not(:focus-visible),
+summary:focus:not(:focus-visible),
+.file-row:focus:not(:focus-visible) {
+  outline: none;
 }
 
 button:disabled {
@@ -87,7 +103,7 @@ button:disabled {
 
 .app-shell {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(420px, 1fr) minmax(300px, 380px);
+  grid-template-columns: minmax(200px, 280px) minmax(280px, 1fr) minmax(260px, 380px);
   /* 暗黙の 1 行が content 高さに伸びると CodeMirror がビューポート全体の高さになり、内部スクロールが消える */
   grid-template-rows: minmax(0, 1fr);
   height: 100vh;
@@ -126,40 +142,40 @@ button:disabled {
   overflow-y: auto;
 }
 
-.app-mark {
-  display: flex;
-  gap: 12px;
-  align-items: center;
+.sidebar-project-line {
   flex-shrink: 0;
+  min-width: 0;
 }
 
-.mark-glyph {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  color: var(--accent-strong);
-  background: #171611;
-  font-size: 21px;
-  font-weight: 700;
+.sidebar-project-line p {
+  margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
 }
 
-.app-mark h1,
-.app-mark p,
 .panel-heading h2,
 .panel-heading p {
   margin: 0;
 }
 
-.app-mark h1,
 .panel-heading h2 {
   font-size: 18px;
   letter-spacing: 0;
 }
 
-.app-mark p,
 .panel-heading p,
 .document-meta,
 .statusbar,
@@ -173,15 +189,6 @@ button:disabled {
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-}
-
-.app-mark p {
-  max-width: 176px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  margin-top: 2px;
 }
 
 .toolbar,
@@ -455,7 +462,22 @@ button:disabled {
   gap: 8px;
 }
 
+.control-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.control-legend {
+  float: none;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+}
+
 .control-block > label,
+.control-legend,
 .settings-input span {
   color: var(--quiet);
   font-family:
@@ -660,6 +682,12 @@ button:disabled {
 
 .spin {
   animation: spin 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
 }
 
 @keyframes spin {

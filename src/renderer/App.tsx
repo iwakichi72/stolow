@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { InputHTMLAttributes } from "react";
 import {
   AlertCircle,
   Check,
@@ -304,6 +305,16 @@ export function App(): JSX.Element {
     setMode(project.settings.defaultMode);
   }, [project]);
 
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+      if (!isDirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [isDirty]);
+
   return (
     <main className="app-shell">
       <ProjectSidebar
@@ -412,30 +423,48 @@ function ProjectSidebar({
 }: ProjectSidebarProps): JSX.Element {
   return (
     <aside className="sidebar" aria-label="Project files">
-      <div className="app-mark">
-        <div className="mark-glyph">S</div>
-        <div>
-          <h1>Stolow</h1>
-          <p>{project?.name ?? "No project"}</p>
+      {project ? (
+        <div className="sidebar-project-line">
+          <p title={project.rootPath}>{project.name}</p>
         </div>
-      </div>
+      ) : null}
 
       <div className="toolbar">
-        <button className="primary-action" onClick={onOpenProject} disabled={isOpening} type="button">
-          {isOpening ? <Loader2 className="spin" size={16} /> : <FolderOpen size={16} />}
+        <button
+          aria-busy={isOpening}
+          className="primary-action"
+          disabled={isOpening}
+          onClick={onOpenProject}
+          type="button"
+        >
+          {isOpening ? <Loader2 aria-hidden className="spin" size={16} /> : <FolderOpen aria-hidden size={16} />}
           Open
         </button>
-        <button className="icon-button" onClick={onSave} disabled={!activeFile || isSaving} title="Save" type="button">
-          {isSaving ? <Loader2 className="spin" size={16} /> : isDirty ? <Save size={16} /> : <Check size={16} />}
+        <button
+          aria-label="Save"
+          className="icon-button"
+          disabled={!activeFile || isSaving}
+          onClick={onSave}
+          title="Save"
+          type="button"
+        >
+          {isSaving ? (
+            <Loader2 aria-hidden className="spin" size={16} />
+          ) : isDirty ? (
+            <Save aria-hidden size={16} />
+          ) : (
+            <Check aria-hidden size={16} />
+          )}
         </button>
         <button
+          aria-label="Refresh file list"
           className="icon-button"
-          onClick={onRefresh}
           disabled={!project}
+          onClick={onRefresh}
           title="Refresh files"
           type="button"
         >
-          <RefreshCcw size={16} />
+          <RefreshCcw aria-hidden size={16} />
         </button>
       </div>
 
@@ -476,7 +505,7 @@ function FileGroup({ activePath, files, label, onFileSelect }: FileGroupProps): 
   return (
     <div className="file-group">
       <div className="group-label">
-        <ChevronRight size={14} />
+        <ChevronRight aria-hidden size={14} />
         <span>{label}</span>
       </div>
       <div className="file-list">
@@ -488,7 +517,7 @@ function FileGroup({ activePath, files, label, onFileSelect }: FileGroupProps): 
             onClick={() => onFileSelect(file)}
             type="button"
           >
-            <FileText size={15} />
+            <FileText aria-hidden size={15} />
             <span>{file.relativePath}</span>
           </button>
         ))}
@@ -543,14 +572,15 @@ function SuggestionPanel({
           <h2>AI サジェスト</h2>
           <p>{selectedChars > 0 ? "選択範囲リライト" : "次の1段落"}</p>
         </div>
-        <PanelRight size={18} />
+        <PanelRight aria-hidden size={18} />
       </div>
 
-      <div className="control-block">
-        <label>モード</label>
+      <fieldset className="control-block control-fieldset">
+        <legend className="control-legend">モード</legend>
         <div className="mode-grid">
           {SUGGESTION_MODES.map((item) => (
             <button
+              aria-pressed={item === mode}
               className={item === mode ? "chip active" : "chip"}
               disabled={controlsLocked}
               key={item}
@@ -562,13 +592,14 @@ function SuggestionPanel({
             </button>
           ))}
         </div>
-      </div>
+      </fieldset>
 
-      <div className="control-block">
-        <label>モデル</label>
-        <div className="segmented">
+      <fieldset className="control-block control-fieldset">
+        <legend className="control-legend">モデル</legend>
+        <div className="segmented" role="presentation">
           {MODEL_PROFILES.map((profile) => (
             <button
+              aria-pressed={profile === modelProfile}
               className={profile === modelProfile ? "active" : ""}
               disabled={controlsLocked}
               key={profile}
@@ -579,28 +610,41 @@ function SuggestionPanel({
             </button>
           ))}
         </div>
-      </div>
+      </fieldset>
 
       {settings ? (
         <details className="settings-box">
           <summary>接続とモデル名</summary>
           <SettingsInput
+            autoComplete="off"
+            inputMode="url"
             label="Ollama URL"
+            name="stolow-ollama-url"
+            spellCheck={false}
             value={settings.ollamaUrl}
             onChange={(value) => onSettingsChange("ollamaUrl", value)}
           />
           <SettingsInput
+            autoComplete="off"
             label="Default"
+            name="stolow-model-default"
+            spellCheck={false}
             value={settings.defaultModel}
             onChange={(value) => onSettingsChange("defaultModel", value)}
           />
           <SettingsInput
+            autoComplete="off"
             label="Quick"
+            name="stolow-model-quick"
+            spellCheck={false}
             value={settings.quickModel}
             onChange={(value) => onSettingsChange("quickModel", value)}
           />
           <SettingsInput
+            autoComplete="off"
             label="Quality"
+            name="stolow-model-quality"
+            spellCheck={false}
             value={settings.qualityModel}
             onChange={(value) => onSettingsChange("qualityModel", value)}
           />
@@ -613,7 +657,11 @@ function SuggestionPanel({
         onClick={onGenerate}
         type="button"
       >
-        {isGenerating ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
+        {isGenerating ? (
+          <Loader2 aria-hidden className="spin" size={18} />
+        ) : (
+          <Sparkles aria-hidden size={18} />
+        )}
         {isGenerating
           ? "生成中…"
           : selectedChars > 0
@@ -630,7 +678,7 @@ function SuggestionPanel({
 
       {error ? (
         <div className="error-box" role="alert">
-          <AlertCircle size={17} />
+          <AlertCircle aria-hidden size={17} />
           <span>{error}</span>
         </div>
       ) : null}
@@ -655,7 +703,7 @@ function SuggestionPanel({
         ))}
         {!result && !isGenerating ? (
           <div className="empty-suggestions">
-            <Sparkles size={18} />
+            <Sparkles aria-hidden size={18} />
             <span>候補はここに表示されます。反映したい候補だけ「本文に反映」を押してください。</span>
           </div>
         ) : null}
@@ -665,12 +713,24 @@ function SuggestionPanel({
 }
 
 interface SettingsInputProps {
+  autoComplete?: string;
+  inputMode?: InputHTMLAttributes<HTMLInputElement>["inputMode"];
   label: string;
+  name?: string;
   onChange: (value: string) => void;
+  spellCheck?: boolean;
   value: string;
 }
 
-function SettingsInput({ label, onChange, value }: SettingsInputProps): JSX.Element {
+function SettingsInput({
+  autoComplete,
+  inputMode,
+  label,
+  name,
+  onChange,
+  spellCheck,
+  value
+}: SettingsInputProps): JSX.Element {
   const [draft, setDraft] = useState(value);
 
   useEffect(() => {
@@ -681,6 +741,10 @@ function SettingsInput({ label, onChange, value }: SettingsInputProps): JSX.Elem
     <label className="settings-input">
       <span>{label}</span>
       <input
+        autoComplete={autoComplete}
+        inputMode={inputMode}
+        name={name}
+        spellCheck={spellCheck}
         value={draft}
         onBlur={() => {
           if (draft.trim() && draft !== value) onChange(draft.trim());
