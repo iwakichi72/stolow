@@ -79,6 +79,7 @@ export interface StolowApi {
   refreshProject: (projectPath: string) => Promise<ProjectSnapshot>;
   readFile: (projectPath: string, relativePath: string) => Promise<string>;
   saveFile: (projectPath: string, relativePath: string, contents: string) => Promise<SaveFileResult>;
+  createMarkdownFile: (projectPath: string, relativePath: string) => Promise<ProjectFile>;
   updateSettings: (projectPath: string, settings: StolowSettings) => Promise<StolowSettings>;
   generateSuggestions: (payload: GenerateSuggestionsPayload) => Promise<GenerateSuggestionsResult>;
 }

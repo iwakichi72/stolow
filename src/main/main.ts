@@ -130,6 +130,27 @@ function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    "file:create",
+    async (_event, projectPath: string, relativePath: string): Promise<ProjectFile> => {
+      const rootPath = canonicalProjectRoot(projectPath);
+      const normalized = normalizeNewMarkdownRelativePath(relativePath);
+      assertCreatableMarkdownRelativePath(normalized);
+      const filePath = resolveProjectMarkdownPath(rootPath, normalized);
+      if (await pathExists(filePath)) {
+        throw new Error("同じ名前のファイルが既に存在します。");
+      }
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      const baseName = path.basename(filePath, ".md");
+      await fs.writeFile(filePath, `# ${baseName}\n\n`, "utf8");
+      return {
+        relativePath: toPosix(path.relative(rootPath, filePath)),
+        name: path.basename(filePath),
+        kind: fileKind(toPosix(path.relative(rootPath, filePath)))
+      };
+    }
+  );
+
+  ipcMain.handle(
     "settings:update",
     async (_event, projectPath: string, settings: StolowSettings): Promise<StolowSettings> => {
       const normalized = normalizeSettings(settings);
@@ -279,6 +300,22 @@ function resolveProjectMarkdownPath(projectPath: string, relativePath: string): 
   }
 
   return filePath;
+}
+
+/** ユーザー入力やIPCから渡される相対パスをPOSIX風に正規化（ディレクトリ区切りは `/` に揃える）。 */
+function normalizeNewMarkdownRelativePath(raw: string): string {
+  const trimmed = raw.trim().replace(/\\/g, "/");
+  const withoutLeading = trimmed.replace(/^\/+/, "").replace(/^\.\/+/, "");
+  return withoutLeading.split("/").filter((segment) => segment !== "" && segment !== "." && segment !== "..").join("/");
+}
+
+function assertCreatableMarkdownRelativePath(relativePath: string): void {
+  if (!relativePath.toLowerCase().endsWith(".md")) {
+    throw new Error("Markdown（.md）のパスを指定してください。");
+  }
+  if (!relativePath.startsWith("manuscript/") && !relativePath.startsWith("context/")) {
+    throw new Error("作成できるのは manuscript/ または context/ 配下の Markdown のみです。");
+  }
 }
 
 async function readOptionalProjectFile(projectPath: string, relativePath: string): Promise<string> {

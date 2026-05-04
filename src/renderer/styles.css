@@ -102,10 +102,9 @@ button:disabled {
 }
 
 .app-shell {
-  display: grid;
-  grid-template-columns: minmax(200px, 280px) minmax(280px, 1fr) minmax(260px, 380px);
-  /* 暗黙の 1 行が content 高さに伸びると CodeMirror がビューポート全体の高さになり、内部スクロールが消える */
-  grid-template-rows: minmax(0, 1fr);
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
   height: 100vh;
   min-height: 0;
   width: 100vw;
@@ -116,6 +115,64 @@ button:disabled {
     var(--bg);
 }
 
+.pane-resizer {
+  flex: 0 0 5px;
+  width: 5px;
+  cursor: col-resize;
+  align-self: stretch;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  position: relative;
+  z-index: 2;
+}
+
+.pane-resizer:hover,
+.pane-resizer:focus-visible {
+  background: rgba(108, 195, 162, 0.22);
+}
+
+.pane-resizer:focus-visible {
+  outline: none;
+}
+
+.ai-panel-reopen {
+  flex: 0 0 34px;
+  width: 34px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 14px 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: rgba(33, 31, 26, 0.96);
+  color: var(--muted);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  cursor: pointer;
+}
+
+.ai-panel-reopen:hover {
+  color: var(--accent-strong);
+  background: rgba(42, 38, 31, 0.98);
+}
+
+.ai-panel-reopen svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
 .sidebar,
 .suggestion-pane {
   min-width: 0;
@@ -124,6 +181,8 @@ button:disabled {
 }
 
 .sidebar {
+  flex-shrink: 0;
+  min-width: 0;
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -199,6 +258,7 @@ button:disabled {
 
 .sidebar .toolbar {
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .primary-action,
@@ -252,6 +312,12 @@ button:disabled {
   align-items: center;
   gap: 5px;
   margin: 0 2px 8px;
+  width: calc(100% - 4px);
+  padding: 4px 6px;
+  margin-left: -2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--quiet);
   font-family:
     ui-sans-serif,
@@ -260,6 +326,36 @@ button:disabled {
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+}
+
+.group-label:hover {
+  color: var(--muted);
+  background: rgba(42, 38, 31, 0.55);
+}
+
+.group-label:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.group-label .folder-chevron {
+  flex-shrink: 0;
+  transition: transform 140ms ease;
+  color: var(--quiet);
+}
+
+.group-label[aria-expanded="true"] .folder-chevron {
+  transform: rotate(90deg);
+}
+
+.file-group.is-collapsed .file-list {
+  display: none;
+}
+
+.file-group.is-collapsed .group-label {
+  margin-bottom: 4px;
 }
 
 .file-list {
@@ -305,13 +401,36 @@ button:disabled {
 }
 
 .editor-pane {
-  min-width: 0;
+  flex: 1 1 0;
+  min-width: 200px;
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) minmax(0, auto);
   background: #1b1914;
   border-left: 1px solid rgba(57, 52, 42, 0.65);
   border-right: 1px solid rgba(57, 52, 42, 0.65);
+}
+
+.editor-panel-error {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border-bottom: 1px solid rgba(226, 140, 124, 0.45);
+  background: rgba(226, 140, 124, 0.09);
+  color: #f2c2b8;
+  padding: 10px 18px;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.editor-panel-error svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--danger);
 }
 
 .editor-topbar,
@@ -437,6 +556,8 @@ button:disabled {
 }
 
 .suggestion-pane {
+  flex-shrink: 0;
+  min-width: 0;
   border-left: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -449,6 +570,30 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 10px;
+}
+
+.panel-heading-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.panel-close-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--button);
+}
+
+.panel-close-button:hover {
+  color: var(--text);
+  background: var(--button-hover);
 }
 
 .panel-heading p {

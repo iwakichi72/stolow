@@ -4,19 +4,22 @@ import {
   AlertCircle,
   Check,
   ChevronRight,
+  FilePlus,
   FileText,
   FolderOpen,
   Loader2,
-  PanelRight,
   RefreshCcw,
   Save,
-  Sparkles
+  Sparkles,
+  StickyNote,
+  X
 } from "lucide-react";
 import type {
   EditorSelectionSnapshot,
   GenerateSuggestionsResult,
   ModelProfile,
   ProjectFile,
+  ProjectFileKind,
   ProjectSnapshot,
   StolowSettings,
   SuggestionCandidate,
@@ -56,6 +59,34 @@ const EMPTY_SELECTION: EditorSelectionSnapshot = {
   selectedText: ""
 };
 
+const LAYOUT_STORAGE_KEYS = {
+  sidebarWidth: "stolow.layout.sidebarWidth",
+  rightPanelWidth: "stolow.layout.rightPanelWidth",
+  aiPanelOpen: "stolow.layout.aiPanelOpen"
+} as const;
+
+function readStoredNumber(key: string, fallback: number): number {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) ? n : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function readStoredBoolean(key: string, fallback: boolean): boolean {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === "0") return false;
+    if (raw === "1") return true;
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export function App(): JSX.Element {
   const [project, setProject] = useState<ProjectSnapshot | null>(null);
   const [activeFile, setActiveFile] = useState<ProjectFile | null>(null);
@@ -73,6 +104,15 @@ export function App(): JSX.Element {
   const [isGenerating, setIsGenerating] = useState(false);
   const [statusMessage, setStatusMessage] = useState("プロジェクトを開いてください。");
   const [panelError, setPanelError] = useState<string | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    readStoredNumber(LAYOUT_STORAGE_KEYS.sidebarWidth, 260)
+  );
+  const [rightPanelWidth, setRightPanelWidth] = useState(() =>
+    readStoredNumber(LAYOUT_STORAGE_KEYS.rightPanelWidth, 320)
+  );
+  const [aiPanelOpen, setAiPanelOpen] = useState(() =>
+    readStoredBoolean(LAYOUT_STORAGE_KEYS.aiPanelOpen, true)
+  );
 
   const isDirty = activeFile !== null && documentText !== lastSavedText;
   const selectedChars = selection.to > selection.from ? selection.to - selection.from : 0;
@@ -306,6 +346,118 @@ export function App(): JSX.Element {
   }, [project]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(LAYOUT_STORAGE_KEYS.sidebarWidth, String(Math.round(sidebarWidth)));
+    } catch {
+      /* ignore */
+    }
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAYOUT_STORAGE_KEYS.rightPanelWidth, String(Math.round(rightPanelWidth)));
+    } catch {
+      /* ignore */
+    }
+  }, [rightPanelWidth]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAYOUT_STORAGE_KEYS.aiPanelOpen, aiPanelOpen ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [aiPanelOpen]);
+
+  const beginResizeSidebar = useCallback(
+    (event: React.MouseEvent): void => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startW = sidebarWidth;
+      const onMove = (moveEvent: MouseEvent): void => {
+        const next = Math.round(Math.min(560, Math.max(180, startW + (moveEvent.clientX - startX))));
+        setSidebarWidth(next);
+      };
+      const onUp = (): void => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [sidebarWidth]
+  );
+
+  const beginResizeSuggestionPane = useCallback(
+    (event: React.MouseEvent): void => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startW = rightPanelWidth;
+
+      const onMove = (moveEvent: MouseEvent): void => {
+        const deltaX = moveEvent.clientX - startX;
+        // 区切りを右に動かすと右パネルは狭くなる（直感的な挙動）
+        const unclamped = startW - deltaX;
+        const next = Math.round(Math.min(720, Math.max(220, unclamped)));
+        setRightPanelWidth(next);
+      };
+      const onUp = (): void => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [rightPanelWidth]
+  );
+
+  const createNewMarkdown = useCallback(
+    async (folder: "manuscript" | "context"): Promise<void> => {
+      if (!project) return;
+      if (isDirty) {
+        setPanelError("未保存の変更があります。保存してから新規ファイルを作成してください。");
+        setStatusMessage("未保存の変更があります。保存してから新規ファイルを作成してください。");
+        return;
+      }
+
+      const defaultStem = folder === "manuscript" ? "new-scene" : "new-note";
+      const message =
+        folder === "manuscript"
+          ? "manuscript に新規 Markdown（ファイル名のみ。拡張子は省略可）"
+          : "context に新規 Markdown（ファイル名のみ。拡張子は省略可）";
+      const input = window.prompt(message, defaultStem);
+      if (input === null) return;
+
+      let base = input.trim().replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "";
+      if (!base) return;
+      if (!base.toLowerCase().endsWith(".md")) {
+        base = `${base}.md`;
+      }
+
+      const relativePath = `${folder}/${base}`;
+      setPanelError(null);
+
+      try {
+        const created = await window.stolow.createMarkdownFile(project.rootPath, relativePath);
+        await refreshProject(project.rootPath, created);
+        setStatusMessage(`${created.relativePath} を作成しました。`);
+      } catch (error) {
+        console.error(error);
+        setPanelError(error instanceof Error ? error.message : "ファイルを作成できませんでした。");
+      }
+    },
+    [isDirty, project, refreshProject]
+  );
+
+  useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent): void => {
       if (!isDirty) return;
       event.preventDefault();
@@ -323,6 +475,7 @@ export function App(): JSX.Element {
         isDirty={isDirty}
         isOpening={isOpening}
         isSaving={isSaving}
+        onCreateMarkdown={createNewMarkdown}
         onFileSelect={(file) => {
           if (isDirty) {
             setStatusMessage("未保存の変更があります。必要なら保存してから別ファイルを開いてください。");
@@ -337,9 +490,24 @@ export function App(): JSX.Element {
         }}
         onSave={saveFile}
         project={project}
+        sidebarWidth={sidebarWidth}
+      />
+
+      <div
+        aria-orientation="vertical"
+        aria-label="サイドバー幅を変更"
+        className="pane-resizer"
+        onMouseDown={beginResizeSidebar}
+        role="separator"
       />
 
       <section className="editor-pane" aria-label="Markdown editor">
+        {!aiPanelOpen && panelError ? (
+          <div className="editor-panel-error" role="alert">
+            <AlertCircle aria-hidden size={17} />
+            <span>{panelError}</span>
+          </div>
+        ) : null}
         <div className="editor-topbar">
           <div className="document-title">
             <span title={activeFile?.relativePath}>
@@ -371,27 +539,51 @@ export function App(): JSX.Element {
         </div>
       </section>
 
-      <SuggestionPanel
-        activeFile={activeFile}
-        error={panelError}
-        expectedSuggestionCount={settingsDraft?.suggestionCount ?? 3}
-        isGenerating={isGenerating}
-        mode={mode}
-        modelProfile={modelProfile}
-        onApply={applySuggestion}
-        onGenerate={generate}
-        onModeChange={(nextMode) => {
-          setMode(nextMode);
-          if (settingsDraft) {
-            void persistSettings({ ...settingsDraft, defaultMode: nextMode });
-          }
-        }}
-        onModelProfileChange={setModelProfile}
-        onSettingsChange={updateSettingsField}
-        result={suggestionResult}
-        selectedChars={selectedChars}
-        settings={settingsDraft}
-      />
+      {aiPanelOpen ? (
+        <>
+          <div
+            aria-orientation="vertical"
+            aria-label="AIパネル幅を変更"
+            className="pane-resizer"
+            onMouseDown={beginResizeSuggestionPane}
+            role="separator"
+          />
+          <SuggestionPanel
+            activeFile={activeFile}
+            error={panelError}
+            expectedSuggestionCount={settingsDraft?.suggestionCount ?? 3}
+            isGenerating={isGenerating}
+            mode={mode}
+            modelProfile={modelProfile}
+            onApply={applySuggestion}
+            onClose={() => setAiPanelOpen(false)}
+            onGenerate={generate}
+            onModeChange={(nextMode) => {
+              setMode(nextMode);
+              if (settingsDraft) {
+                void persistSettings({ ...settingsDraft, defaultMode: nextMode });
+              }
+            }}
+            onModelProfileChange={setModelProfile}
+            onSettingsChange={updateSettingsField}
+            result={suggestionResult}
+            rightPanelWidth={rightPanelWidth}
+            selectedChars={selectedChars}
+            settings={settingsDraft}
+          />
+        </>
+      ) : (
+        <button
+          aria-label="AI サジェストパネルを開く"
+          className="ai-panel-reopen"
+          onClick={() => setAiPanelOpen(true)}
+          title="AI サジェストを表示"
+          type="button"
+        >
+          <Sparkles aria-hidden size={18} />
+          AI
+        </button>
+      )}
     </main>
   );
 }
@@ -402,11 +594,13 @@ interface ProjectSidebarProps {
   isDirty: boolean;
   isOpening: boolean;
   isSaving: boolean;
+  onCreateMarkdown: (folder: "manuscript" | "context") => void;
   onFileSelect: (file: ProjectFile) => void;
   onOpenProject: () => void;
   onRefresh: () => void;
   onSave: () => void;
   project: ProjectSnapshot | null;
+  sidebarWidth: number;
 }
 
 function ProjectSidebar({
@@ -415,14 +609,30 @@ function ProjectSidebar({
   isDirty,
   isOpening,
   isSaving,
+  onCreateMarkdown,
   onFileSelect,
   onOpenProject,
   onRefresh,
   onSave,
-  project
+  project,
+  sidebarWidth
 }: ProjectSidebarProps): JSX.Element {
+  const [expandedGroups, setExpandedGroups] = useState<Record<ProjectFileKind, boolean>>({
+    manuscript: true,
+    context: true,
+    other: true
+  });
+
+  const toggleGroup = useCallback((kind: ProjectFileKind): void => {
+    setExpandedGroups((current) => ({ ...current, [kind]: !current[kind] }));
+  }, []);
+
   return (
-    <aside className="sidebar" aria-label="Project files">
+    <aside
+      className="sidebar"
+      aria-label="Project files"
+      style={{ width: sidebarWidth, maxWidth: "100%" }}
+    >
       {project ? (
         <div className="sidebar-project-line">
           <p title={project.rootPath}>{project.name}</p>
@@ -466,27 +676,53 @@ function ProjectSidebar({
         >
           <RefreshCcw aria-hidden size={16} />
         </button>
+        <button
+          aria-label="manuscript に新規 Markdown"
+          className="icon-button"
+          disabled={!project}
+          onClick={() => onCreateMarkdown("manuscript")}
+          title="原稿（manuscript）に新規 .md"
+          type="button"
+        >
+          <FilePlus aria-hidden size={16} />
+        </button>
+        <button
+          aria-label="context に新規 Markdown"
+          className="icon-button"
+          disabled={!project}
+          onClick={() => onCreateMarkdown("context")}
+          title="Context に新規 .md"
+          type="button"
+        >
+          <StickyNote aria-hidden size={16} />
+        </button>
       </div>
 
       <div className="sidebar-files">
         <FileGroup
           activePath={activeFile?.relativePath}
+          expanded={expandedGroups.manuscript}
           files={groupedFiles.manuscript}
           label="Manuscript"
           onFileSelect={onFileSelect}
+          onToggle={() => toggleGroup("manuscript")}
         />
         <FileGroup
           activePath={activeFile?.relativePath}
+          expanded={expandedGroups.context}
           files={groupedFiles.context}
           label="Context"
           onFileSelect={onFileSelect}
+          onToggle={() => toggleGroup("context")}
         />
         {groupedFiles.other.length > 0 ? (
           <FileGroup
             activePath={activeFile?.relativePath}
+            expanded={expandedGroups.other}
             files={groupedFiles.other}
             label="Other"
             onFileSelect={onFileSelect}
+            onToggle={() => toggleGroup("other")}
           />
         ) : null}
       </div>
@@ -496,19 +732,34 @@ function ProjectSidebar({
 
 interface FileGroupProps {
   activePath?: string;
+  expanded: boolean;
   files: ProjectFile[];
   label: string;
   onFileSelect: (file: ProjectFile) => void;
+  onToggle: () => void;
 }
 
-function FileGroup({ activePath, files, label, onFileSelect }: FileGroupProps): JSX.Element {
+function FileGroup({
+  activePath,
+  expanded,
+  files,
+  label,
+  onFileSelect,
+  onToggle
+}: FileGroupProps): JSX.Element {
   return (
-    <div className="file-group">
-      <div className="group-label">
-        <ChevronRight aria-hidden size={14} />
+    <div className={`file-group${expanded ? "" : " is-collapsed"}`}>
+      <button
+        aria-controls={`file-group-${label}`}
+        aria-expanded={expanded}
+        className="group-label"
+        onClick={onToggle}
+        type="button"
+      >
+        <ChevronRight aria-hidden className="folder-chevron" size={14} />
         <span>{label}</span>
-      </div>
-      <div className="file-list">
+      </button>
+      <div className="file-list" id={`file-group-${label}`}>
         {files.length === 0 ? <div className="empty-list">No Markdown files</div> : null}
         {files.map((file) => (
           <button
@@ -534,11 +785,13 @@ interface SuggestionPanelProps {
   mode: SuggestionMode;
   modelProfile: ModelProfile;
   onApply: (candidate: SuggestionCandidate) => void;
+  onClose: () => void;
   onGenerate: () => void;
   onModeChange: (mode: SuggestionMode) => void;
   onModelProfileChange: (profile: ModelProfile) => void;
   onSettingsChange: <K extends keyof StolowSettings>(field: K, value: StolowSettings[K]) => void;
   result: GenerateSuggestionsResult | null;
+  rightPanelWidth: number;
   selectedChars: number;
   settings: StolowSettings | null;
 }
@@ -551,11 +804,13 @@ function SuggestionPanel({
   mode,
   modelProfile,
   onApply,
+  onClose,
   onGenerate,
   onModeChange,
   onModelProfileChange,
   onSettingsChange,
   result,
+  rightPanelWidth,
   selectedChars,
   settings
 }: SuggestionPanelProps): JSX.Element {
@@ -566,13 +821,27 @@ function SuggestionPanel({
       : null;
 
   return (
-    <aside className="suggestion-pane" aria-label="AI suggestions">
+    <aside
+      className="suggestion-pane"
+      aria-label="AI suggestions"
+      style={{ width: rightPanelWidth, maxWidth: "100%" }}
+    >
       <div className="panel-heading">
         <div>
           <h2>AI サジェスト</h2>
           <p>{selectedChars > 0 ? "選択範囲リライト" : "次の1段落"}</p>
         </div>
-        <PanelRight aria-hidden size={18} />
+        <div className="panel-heading-actions">
+          <button
+            aria-label="AI パネルを閉じる"
+            className="panel-close-button"
+            onClick={onClose}
+            title="パネルを閉じる"
+            type="button"
+          >
+            <X aria-hidden size={16} />
+          </button>
+        </div>
       </div>
 
       <fieldset className="control-block control-fieldset">

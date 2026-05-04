@@ -8,6 +8,8 @@ const api: StolowApi = {
     ipcRenderer.invoke("file:read", projectPath, relativePath),
   saveFile: (projectPath: string, relativePath: string, contents: string) =>
     ipcRenderer.invoke("file:save", projectPath, relativePath, contents),
+  createMarkdownFile: (projectPath: string, relativePath: string) =>
+    ipcRenderer.invoke("file:create", projectPath, relativePath),
   updateSettings: (projectPath: string, settings: StolowSettings) =>
     ipcRenderer.invoke("settings:update", projectPath, settings),
   generateSuggestions: (payload: GenerateSuggestionsPayload) => ipcRenderer.invoke("ai:generate", payload)
