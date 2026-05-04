@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -16,10 +17,22 @@ import { StolowAiError } from "../stolow/ai/stolowAiError.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+app.setName("Stolow");
 const PROJECT_VERSION = 1;
 const MAX_PROJECT_FILES = 1000;
 
 let mainWindow: BrowserWindow | null = null;
+
+function resolveWindowIcon(): string | undefined {
+  const candidates = app.isPackaged
+    ? [path.join(app.getAppPath(), "assets", "icon.png")]
+    : [path.join(__dirname, "../../assets", "icon.png")];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -28,6 +41,7 @@ function createWindow(): void {
     minWidth: 980,
     minHeight: 640,
     title: "Stolow",
+    icon: resolveWindowIcon(),
     backgroundColor: "#191712",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

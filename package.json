@@ -8,7 +8,9 @@
   "scripts": {
     "dev": "npm run build && electron .",
     "build": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.main.json && vite build",
-    "start": "electron ."
+    "start": "electron .",
+    "icon:mac": "bash scripts/generate-mac-icon.sh",
+    "dist:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.3.4",
@@ -24,7 +26,30 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
+  },
+  "build": {
+    "appId": "com.stolow.app",
+    "productName": "Stolow",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "dir"
+      ],
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.productivity",
+      "identity": null
+    }
   }
 }
