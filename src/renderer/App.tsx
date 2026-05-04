@@ -439,26 +439,28 @@ function ProjectSidebar({
         </button>
       </div>
 
-      <FileGroup
-        activePath={activeFile?.relativePath}
-        files={groupedFiles.manuscript}
-        label="Manuscript"
-        onFileSelect={onFileSelect}
-      />
-      <FileGroup
-        activePath={activeFile?.relativePath}
-        files={groupedFiles.context}
-        label="Context"
-        onFileSelect={onFileSelect}
-      />
-      {groupedFiles.other.length > 0 ? (
+      <div className="sidebar-files">
         <FileGroup
           activePath={activeFile?.relativePath}
-          files={groupedFiles.other}
-          label="Other"
+          files={groupedFiles.manuscript}
+          label="Manuscript"
           onFileSelect={onFileSelect}
         />
-      ) : null}
+        <FileGroup
+          activePath={activeFile?.relativePath}
+          files={groupedFiles.context}
+          label="Context"
+          onFileSelect={onFileSelect}
+        />
+        {groupedFiles.other.length > 0 ? (
+          <FileGroup
+            activePath={activeFile?.relativePath}
+            files={groupedFiles.other}
+            label="Other"
+            onFileSelect={onFileSelect}
+          />
+        ) : null}
+      </div>
     </aside>
   );
 }
