@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -17,6 +17,17 @@ import { StolowAiError } from "../stolow/ai/stolowAiError.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+/** 同一プロジェクトでも `/tmp` と `/private/tmp` など表記が揃わないと path 検証や read が失敗するため、ルートは常に実パスへ揃える。 */
+function canonicalProjectRoot(rawPath: string): string {
+  const resolved = path.resolve(rawPath);
+  try {
+    return realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
 app.setName("Stolow");
 const PROJECT_VERSION = 1;
 const MAX_PROJECT_FILES = 1000;
@@ -44,7 +55,7 @@ function createWindow(): void {
     icon: resolveWindowIcon(),
     backgroundColor: "#191712",
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false
     }
@@ -83,14 +94,16 @@ function registerIpcHandlers(): void {
 
     if (result.canceled || result.filePaths.length === 0) return null;
 
-    const rootPath = result.filePaths[0];
+    const rawRoot = result.filePaths[0];
+    const rootPath = canonicalProjectRoot(rawRoot);
     await ensureProject(rootPath);
     return readProjectSnapshot(rootPath);
   });
 
   ipcMain.handle("project:refresh", async (_event, projectPath: string): Promise<ProjectSnapshot> => {
-    await ensureProject(projectPath);
-    return readProjectSnapshot(projectPath);
+    const rootPath = canonicalProjectRoot(projectPath);
+    await ensureProject(rootPath);
+    return readProjectSnapshot(rootPath);
   });
 
   ipcMain.handle(
@@ -256,9 +269,8 @@ function fileKind(relativePath: string): ProjectFileKind {
 function resolveProjectMarkdownPath(projectPath: string, relativePath: string): string {
   const root = path.resolve(projectPath);
   const filePath = path.resolve(root, relativePath);
-  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-
-  if (!filePath.startsWith(rootPrefix)) {
+  const rel = path.relative(root, filePath);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) {
     throw new Error("Invalid project file path.");
   }
 

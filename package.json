@@ -7,7 +7,7 @@
   "main": "dist-electron/main/main.js",
   "scripts": {
     "dev": "npm run build && electron .",
-    "build": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.main.json && vite build",
+    "build": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.main.json && tsc -p tsconfig.preload.json && node scripts/cjs-preload.mjs && vite build",
     "start": "electron .",
     "icon:mac": "bash scripts/generate-mac-icon.sh",
     "dist:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac"

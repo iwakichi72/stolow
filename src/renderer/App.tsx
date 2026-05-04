@@ -143,6 +143,12 @@ export function App(): JSX.Element {
     setPanelError(null);
 
     try {
+      if (!window.stolow) {
+        setPanelError(
+          "Electron のプリロードが読み込まれていません。`npm run dev` で起動するか、ビルド済みの Stolow から開いてください。"
+        );
+        return;
+      }
       const snapshot = await window.stolow.openProject();
       if (!snapshot) return;
 

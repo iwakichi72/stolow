@@ -9,5 +9,6 @@
     "noEmit": false,
     "jsx": "react-jsx"
   },
-  "include": ["src/main", "src/shared", "src/stolow"]
+  "include": ["src/main", "src/shared", "src/stolow"],
+  "exclude": ["src/main/preload.ts"]
 }
