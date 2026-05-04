@@ -8,7 +8,7 @@ interface RawSuggestionObject {
 }
 
 export function parseSuggestions(raw: string, maxParagraphChars: number): ParsedSuggestions {
-  const jsonText = stripCodeFence(raw).trim();
+  const jsonText = extractJsonPayload(raw);
   let parsed: unknown;
 
   try {
@@ -42,8 +42,43 @@ export function parseSuggestions(raw: string, maxParagraphChars: number): Parsed
 }
 
 function stripCodeFence(text: string): string {
-  const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim());
-  return fence ? fence[1] : text;
+  const trimmed = text.trim();
+  const whole = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
+  if (whole) return whole[1].trim();
+
+  const inline = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(trimmed);
+  if (inline) return inline[1].trim();
+
+  return trimmed;
+}
+
+/**
+ * 前置き・後書き・非JSONが混ざっても、最初の JSON オブジェクトを拾ってパースする。
+ */
+function extractJsonPayload(raw: string): string {
+  const unfenced = stripCodeFence(raw).trim();
+  if (unfenced.length === 0) return "";
+
+  try {
+    JSON.parse(unfenced);
+    return unfenced;
+  } catch {
+    // continue
+  }
+
+  const start = unfenced.indexOf("{");
+  const end = unfenced.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    const slice = unfenced.slice(start, end + 1);
+    try {
+      JSON.parse(slice);
+      return slice;
+    } catch {
+      // continue
+    }
+  }
+
+  return unfenced;
 }
 
 function extractRawSuggestions(parsed: unknown): unknown[] {

@@ -302,17 +302,19 @@ function toUserFacingAiMessage(error: unknown): string {
 
   switch (error.code) {
     case "OLLAMA_UNAVAILABLE":
-      return "Ollamaに接続できません。Ollamaが起動しているか確認してください。";
+      return "Ollamaに接続できません。ターミナルで `ollama serve` が動いているか、設定の Ollama URL（例: http://localhost:11434）が正しいか確認してください。";
     case "MODEL_NOT_FOUND":
-      return "指定モデルが見つかりません。Ollamaにモデルが存在するか確認してください。";
+      return "指定モデルが見つかりません。`ollama list` で名前を確認し、未 Pull なら `ollama pull <モデル名>` を実行してください。";
     case "PROJECT_NOT_OPEN":
       return "プロジェクトが開かれていません。";
     case "LLM_JSON_INVALID":
-      return "LLM応答を読み取れませんでした。もう一度生成してください。";
+      return "LLM応答を読み取れませんでした。もう一度生成するか、別モデル・温度を試してください。";
     case "EMPTY_SUGGESTIONS":
       return "候補が空でした。もう一度生成してください。";
     case "TIMEOUT":
-      return "通信がタイムアウトしました。モデルまたは接続を確認してください。";
+      return "通信がタイムアウトしました。モデルが重い場合は時間をおくか、クイック用モデルに切り替えてください。";
+    case "HTTP_ERROR":
+      return "OllamaからのHTTP応答が不正でした。Ollamaを再起動するか、URLとモデル名を確認してください。";
     default:
       return "AI生成に失敗しました。詳細は開発者コンソールを確認してください。";
   }

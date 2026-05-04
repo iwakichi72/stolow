@@ -155,6 +155,12 @@ export function App(): JSX.Element {
         snapshot.files.find((file) => file.kind === "manuscript") ?? snapshot.files[0] ?? null;
       if (firstFile) {
         await loadFile(firstFile, snapshot);
+      } else {
+        setActiveFile(null);
+        setDocumentText("");
+        setLastSavedText("");
+        setSelection(EMPTY_SELECTION);
+        setStatusMessage("Markdown ファイルが見つかりません。manuscript/ に .md を追加してください。");
       }
     } catch (error) {
       console.error(error);
@@ -267,7 +273,7 @@ export function App(): JSX.Element {
           head: target.from + cleanText.length,
           selectedText: cleanText
         });
-        setStatusMessage("選択範囲を置換しました。");
+        setStatusMessage("選択範囲を候補で置き換えました。必要なら上書き保存してください。");
         return;
       }
 
@@ -281,7 +287,7 @@ export function App(): JSX.Element {
         head,
         selectedText: ""
       });
-      setStatusMessage("候補を挿入しました。");
+      setStatusMessage("候補を本文に反映しました。必要なら上書き保存してください。");
     },
     [documentText, generationTarget, selection, suggestionResult?.kind]
   );
@@ -319,28 +325,39 @@ export function App(): JSX.Element {
       <section className="editor-pane" aria-label="Markdown editor">
         <div className="editor-topbar">
           <div className="document-title">
-            <span>{activeFile?.name ?? "No file open"}</span>
-            {isDirty ? <strong>Unsaved</strong> : null}
+            <span title={activeFile?.relativePath}>
+              {activeFile ? `${activeFile.name}` : "ファイル未選択"}
+            </span>
+            {activeFile ? (
+              <span className="document-path" title={activeFile.relativePath}>
+                {activeFile.relativePath}
+              </span>
+            ) : null}
+            {isDirty ? <strong className="dirty-badge">未保存</strong> : activeFile ? <span className="saved-badge">保存済み</span> : null}
           </div>
           <div className="document-meta">
-            {isLoadingFile ? "Loading..." : `${documentText.length.toLocaleString()} chars`}
+            {isLoadingFile ? "読み込み中…" : `${documentText.length.toLocaleString()} 文字`}
           </div>
         </div>
         <MarkdownEditor
           value={documentText}
           onChange={setDocumentText}
           onSelectionChange={setSelection}
+          selection={selection}
           editable={activeFile !== null}
         />
         <div className="statusbar">
           <span>{statusMessage}</span>
-          <span>{selectedChars > 0 ? `${selectedChars.toLocaleString()} chars selected` : "No selection"}</span>
+          <span>
+            {selectedChars > 0 ? `${selectedChars.toLocaleString()} 文字を選択中` : "選択なし"}
+          </span>
         </div>
       </section>
 
       <SuggestionPanel
         activeFile={activeFile}
         error={panelError}
+        expectedSuggestionCount={settingsDraft?.suggestionCount ?? 3}
         isGenerating={isGenerating}
         mode={mode}
         modelProfile={modelProfile}
@@ -475,6 +492,7 @@ function FileGroup({ activePath, files, label, onFileSelect }: FileGroupProps): 
 interface SuggestionPanelProps {
   activeFile: ProjectFile | null;
   error: string | null;
+  expectedSuggestionCount: number;
   isGenerating: boolean;
   mode: SuggestionMode;
   modelProfile: ModelProfile;
@@ -491,6 +509,7 @@ interface SuggestionPanelProps {
 function SuggestionPanel({
   activeFile,
   error,
+  expectedSuggestionCount,
   isGenerating,
   mode,
   modelProfile,
@@ -503,22 +522,29 @@ function SuggestionPanel({
   selectedChars,
   settings
 }: SuggestionPanelProps): JSX.Element {
+  const controlsLocked = isGenerating;
+  const shortCount =
+    result && result.suggestions.length < expectedSuggestionCount
+      ? `モデルは ${result.suggestions.length} 件のみ返しました（期待 ${expectedSuggestionCount} 件）。`
+      : null;
+
   return (
     <aside className="suggestion-pane" aria-label="AI suggestions">
       <div className="panel-heading">
         <div>
-          <h2>AI Suggest</h2>
-          <p>{selectedChars > 0 ? "Selection rewrite" : "Next paragraph"}</p>
+          <h2>AI サジェスト</h2>
+          <p>{selectedChars > 0 ? "選択範囲リライト" : "次の1段落"}</p>
         </div>
         <PanelRight size={18} />
       </div>
 
       <div className="control-block">
-        <label>Mode</label>
+        <label>モード</label>
         <div className="mode-grid">
           {SUGGESTION_MODES.map((item) => (
             <button
               className={item === mode ? "chip active" : "chip"}
+              disabled={controlsLocked}
               key={item}
               onClick={() => onModeChange(item)}
               title={MODE_HINTS[item]}
@@ -531,11 +557,12 @@ function SuggestionPanel({
       </div>
 
       <div className="control-block">
-        <label>Model profile</label>
+        <label>モデル</label>
         <div className="segmented">
           {MODEL_PROFILES.map((profile) => (
             <button
               className={profile === modelProfile ? "active" : ""}
+              disabled={controlsLocked}
               key={profile}
               onClick={() => onModelProfileChange(profile)}
               type="button"
@@ -548,7 +575,7 @@ function SuggestionPanel({
 
       {settings ? (
         <details className="settings-box">
-          <summary>Connection and models</summary>
+          <summary>接続とモデル名</summary>
           <SettingsInput
             label="Ollama URL"
             value={settings.ollamaUrl}
@@ -572,10 +599,26 @@ function SuggestionPanel({
         </details>
       ) : null}
 
-      <button className="generate-button" disabled={!activeFile || isGenerating} onClick={onGenerate} type="button">
+      <button
+        className="generate-button"
+        disabled={!activeFile || !settings || isGenerating}
+        onClick={onGenerate}
+        type="button"
+      >
         {isGenerating ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
-        {isGenerating ? "Generating..." : selectedChars > 0 ? "Rewrite selection" : "Generate 3 ideas"}
+        {isGenerating
+          ? "生成中…"
+          : selectedChars > 0
+            ? "リライト候補を生成"
+            : `次段落を ${expectedSuggestionCount} 件生成`}
       </button>
+
+      {isGenerating ? (
+        <div className="generating-hint" role="status">
+          <Loader2 className="spin" size={16} aria-hidden />
+          <span>Ollama から応答を待っています。長いモデルは数分かかることがあります。</span>
+        </div>
+      ) : null}
 
       {error ? (
         <div className="error-box" role="alert">
@@ -584,22 +627,28 @@ function SuggestionPanel({
         </div>
       ) : null}
 
-      <div className="suggestion-list">
+      {shortCount ? (
+        <div className="hint-box" role="status">
+          {shortCount}
+        </div>
+      ) : null}
+
+      <div className={`suggestion-list${isGenerating ? " is-generating" : ""}`}>
         {result?.suggestions.map((candidate) => (
           <article className="suggestion-card" key={candidate.id}>
             <div className="suggestion-title">
               <span>{candidate.title}</span>
-              <button onClick={() => onApply(candidate)} type="button">
-                Apply
+              <button disabled={isGenerating} onClick={() => onApply(candidate)} type="button">
+                本文に反映
               </button>
             </div>
-            <p>{candidate.text}</p>
+            <p className="suggestion-body">{candidate.text}</p>
           </article>
         ))}
         {!result && !isGenerating ? (
           <div className="empty-suggestions">
             <Sparkles size={18} />
-            <span>候補はここに表示されます。</span>
+            <span>候補はここに表示されます。反映したい候補だけ「本文に反映」を押してください。</span>
           </div>
         ) : null}
       </div>
