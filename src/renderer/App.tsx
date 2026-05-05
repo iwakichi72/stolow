@@ -20,6 +20,8 @@ import type {
   ModelProfile,
   ProjectFile,
   ProjectFileKind,
+  ProjectSearchResult,
+  ProjectReplacePreviewResult,
   ProjectSnapshot,
   StolowSettings,
   SuggestionCandidate,
@@ -93,8 +95,8 @@ export function App(): JSX.Element {
   const [documentText, setDocumentText] = useState("");
   const [lastSavedText, setLastSavedText] = useState("");
   const [selection, setSelection] = useState<EditorSelectionSnapshot>(EMPTY_SELECTION);
-  const [includeSummary, setIncludeSummary] = useState(true);
-  const [includeNotes, setIncludeNotes] = useState(true);
+  const [contextSelection, setContextSelection] = useState<Record<string, boolean>>({});
+  const [chapterHeadingLevel, setChapterHeadingLevel] = useState<0 | 1 | 2>(0);
   const [mode, setMode] = useState<SuggestionMode>("natural");
   const [modelProfile, setModelProfile] = useState<ModelProfile>("default");
   const [settingsDraft, setSettingsDraft] = useState<StolowSettings | null>(null);
@@ -115,7 +117,9 @@ export function App(): JSX.Element {
   const [aiPanelOpen, setAiPanelOpen] = useState(() =>
     readStoredBoolean(LAYOUT_STORAGE_KEYS.aiPanelOpen, true)
   );
+  const [rightPanelTab, setRightPanelTab] = useState<"ai" | "search">("ai");
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
+  const focusSearchRef = useRef<null | (() => void)>(null);
   const [previewPlan, setPreviewPlan] = useState<null | {
     title: string;
     kindLabel: string;
@@ -126,6 +130,14 @@ export function App(): JSX.Element {
 
   const isDirty = activeFile !== null && documentText !== lastSavedText;
   const selectedChars = selection.to > selection.from ? selection.to - selection.from : 0;
+  const contextFiles = useMemo(
+    () => (project?.files ?? []).filter((file) => file.kind === "context"),
+    [project?.files]
+  );
+  const selectedContextFiles = useMemo(
+    () => Object.keys(contextSelection).filter((path) => contextSelection[path]),
+    [contextSelection]
+  );
 
   const groupedFiles = useMemo(() => {
     const groups: Record<ProjectFile["kind"], ProjectFile[]> = {
@@ -296,8 +308,8 @@ export function App(): JSX.Element {
         documentText,
         cursorPosition: target.head,
         selection: target,
-        includeSummary,
-        includeNotes,
+        contextFiles: selectedContextFiles,
+        chapterHeadingLevel,
         mode,
         modelProfile,
         settings: settingsDraft
@@ -314,13 +326,13 @@ export function App(): JSX.Element {
     }
   }, [
     activeFile,
+    chapterHeadingLevel,
     documentText,
-    includeNotes,
-    includeSummary,
     mode,
     modelProfile,
     project,
     selection,
+    selectedContextFiles,
     settingsDraft
   ]);
 
@@ -394,6 +406,17 @@ export function App(): JSX.Element {
     setSettingsDraft(project.settings);
     setMode(project.settings.defaultMode);
   }, [project]);
+
+  useEffect(() => {
+    if (!project) return;
+    const next: Record<string, boolean> = {};
+    for (const file of project.files) {
+      if (file.kind !== "context") continue;
+      next[file.relativePath] =
+        file.relativePath === "context/summary.md" || file.relativePath === "context/notes.md";
+    }
+    setContextSelection(next);
+  }, [project?.rootPath]);
 
   useEffect(() => {
     try {
@@ -517,6 +540,89 @@ export function App(): JSX.Element {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [isDirty]);
 
+  useEffect(() => {
+    const isEditableElement = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName.toLowerCase();
+      return tag === "input" || tag === "textarea" || target.isContentEditable;
+    };
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const mod = navigator.platform.includes("Mac") ? event.metaKey : event.ctrlKey;
+      if (!mod && event.key !== "Escape") return;
+
+      // Escape: close preview modal
+      if (event.key === "Escape") {
+        if (previewPlan) {
+          event.preventDefault();
+          setPreviewPlan(null);
+        }
+        return;
+      }
+
+      // Avoid hijacking when typing into inputs
+      if (isEditableElement(event.target)) return;
+
+      // Mod+F: open search tab and focus query
+      if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        if (!aiPanelOpen) setAiPanelOpen(true);
+        setRightPanelTab("search");
+        window.setTimeout(() => focusSearchRef.current?.(), 0);
+        return;
+      }
+
+      // Mod+Enter: generate (AI tab)
+      if (event.key === "Enter") {
+        if (!aiPanelOpen) setAiPanelOpen(true);
+        setRightPanelTab("ai");
+        event.preventDefault();
+        void generate();
+        return;
+      }
+
+      // Mod+Shift+P: preview first candidate
+      if (event.shiftKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        const first = suggestionResult?.suggestions?.[0];
+        if (!first) {
+          setPanelError("プレビューする候補がありません。先に生成してください。");
+          return;
+        }
+        const plan = buildApplyPlan(first);
+        if (!plan) {
+          setPanelError("候補が空です。");
+          return;
+        }
+        setPreviewPlan(plan);
+        return;
+      }
+
+      // Mod+Shift+A: apply first candidate
+      if (event.shiftKey && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        const first = suggestionResult?.suggestions?.[0];
+        if (!first) {
+          setPanelError("反映する候補がありません。先に生成してください。");
+          return;
+        }
+        applySuggestion(first);
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    aiPanelOpen,
+    applySuggestion,
+    buildApplyPlan,
+    generate,
+    isDirty,
+    previewPlan,
+    suggestionResult?.suggestions
+  ]);
+
   return (
     <main className="app-shell">
       <ProjectSidebar
@@ -599,41 +705,126 @@ export function App(): JSX.Element {
             onMouseDown={beginResizeSuggestionPane}
             role="separator"
           />
-          <SuggestionPanel
-            activeFile={activeFile}
-            error={panelError}
-            expectedSuggestionCount={settingsDraft?.suggestionCount ?? 3}
-            isGenerating={isGenerating}
-            mode={mode}
-            modelProfile={modelProfile}
-            onApply={applySuggestion}
-            onPreview={(candidate) => {
-              const plan = buildApplyPlan(candidate);
-              if (!plan) {
-                setPanelError("候補が空です。");
-                return;
-              }
-              setPreviewPlan(plan);
-            }}
-            onClose={() => setAiPanelOpen(false)}
-            onGenerate={generate}
-            onModeChange={(nextMode) => {
-              setMode(nextMode);
-              if (settingsDraft) {
-                void persistSettings({ ...settingsDraft, defaultMode: nextMode });
-              }
-            }}
-            onModelProfileChange={setModelProfile}
-            onSettingsChange={updateSettingsField}
-            includeNotes={includeNotes}
-            includeSummary={includeSummary}
-            onIncludeNotesChange={setIncludeNotes}
-            onIncludeSummaryChange={setIncludeSummary}
-            result={suggestionResult}
-            rightPanelWidth={rightPanelWidth}
-            selectedChars={selectedChars}
-            settings={settingsDraft}
-          />
+          <aside
+            className="suggestion-pane"
+            aria-label="Right panel"
+            style={{ width: rightPanelWidth, maxWidth: "100%" }}
+          >
+            <div className="panel-heading">
+              <div>
+                <h2>{rightPanelTab === "ai" ? "AI サジェスト" : "検索"}</h2>
+                <p>
+                  {rightPanelTab === "ai"
+                    ? selectedChars > 0
+                      ? "選択範囲リライト"
+                      : "次の1段落"
+                    : project
+                      ? "プロジェクト内の Markdown を検索"
+                      : "プロジェクト未選択"}
+                </p>
+              </div>
+              <div className="panel-heading-actions">
+                <div className="panel-tabs" role="tablist" aria-label="Right panel tabs">
+                  <button
+                    aria-selected={rightPanelTab === "ai"}
+                    className={rightPanelTab === "ai" ? "active" : ""}
+                    onClick={() => setRightPanelTab("ai")}
+                    role="tab"
+                    type="button"
+                  >
+                    AI
+                  </button>
+                  <button
+                    aria-selected={rightPanelTab === "search"}
+                    className={rightPanelTab === "search" ? "active" : ""}
+                    onClick={() => setRightPanelTab("search")}
+                    role="tab"
+                    type="button"
+                  >
+                    検索
+                  </button>
+                </div>
+                <button
+                  aria-label="右パネルを閉じる"
+                  className="panel-close-button"
+                  onClick={() => setAiPanelOpen(false)}
+                  title="パネルを閉じる"
+                  type="button"
+                >
+                  <X aria-hidden size={16} />
+                </button>
+              </div>
+            </div>
+
+            {rightPanelTab === "ai" ? (
+              <SuggestionPanelBody
+                activeFile={activeFile}
+                contextFiles={contextFiles}
+                contextSelection={contextSelection}
+                chapterHeadingLevel={chapterHeadingLevel}
+                error={panelError}
+                expectedSuggestionCount={settingsDraft?.suggestionCount ?? 3}
+                isGenerating={isGenerating}
+                mode={mode}
+                modelProfile={modelProfile}
+                onApply={applySuggestion}
+                onChapterHeadingLevelChange={setChapterHeadingLevel}
+                onContextToggle={(relativePath, nextValue) => {
+                  setContextSelection((current) => ({ ...current, [relativePath]: nextValue }));
+                }}
+                onModeChange={(nextMode) => {
+                  setMode(nextMode);
+                  if (settingsDraft) {
+                    void persistSettings({ ...settingsDraft, defaultMode: nextMode });
+                  }
+                }}
+                onModelProfileChange={setModelProfile}
+                onPreview={(candidate) => {
+                  const plan = buildApplyPlan(candidate);
+                  if (!plan) {
+                    setPanelError("候補が空です。");
+                    return;
+                  }
+                  setPreviewPlan(plan);
+                }}
+                onGenerate={generate}
+                onSettingsChange={updateSettingsField}
+                result={suggestionResult}
+                selectedChars={selectedChars}
+                settings={settingsDraft}
+              />
+            ) : (
+              <SearchPanel
+                error={panelError}
+                project={project}
+                registerFocus={(fn) => {
+                  focusSearchRef.current = fn;
+                }}
+                onJump={async (relativePath, from, to) => {
+                  if (!project) return;
+                  const file = project.files.find((f) => f.relativePath === relativePath);
+                  if (!file) return;
+                  await loadFile(file);
+                  const head = to;
+                  setSelection({
+                    from,
+                    to,
+                    head,
+                    selectedText: ""
+                  });
+                }}
+                onRefreshAfterReplace={async () => {
+                  if (!project) return;
+                  await refreshProject(project.rootPath, activeFile);
+                  if (activeFile) {
+                    await loadFile(activeFile);
+                  }
+                }}
+                setPanelError={setPanelError}
+                setStatusMessage={setStatusMessage}
+              />
+            )}
+          </aside>
         </>
       ) : (
         <button
@@ -893,53 +1084,51 @@ function FileGroup({
   );
 }
 
-interface SuggestionPanelProps {
+interface SuggestionPanelBodyProps {
   activeFile: ProjectFile | null;
+  contextFiles: ProjectFile[];
+  contextSelection: Record<string, boolean>;
+  chapterHeadingLevel: 0 | 1 | 2;
   error: string | null;
   expectedSuggestionCount: number;
   isGenerating: boolean;
-  includeNotes: boolean;
-  includeSummary: boolean;
   mode: SuggestionMode;
   modelProfile: ModelProfile;
   onApply: (candidate: SuggestionCandidate) => void;
   onPreview: (candidate: SuggestionCandidate) => void;
-  onClose: () => void;
   onGenerate: () => void;
-  onIncludeNotesChange: (value: boolean) => void;
-  onIncludeSummaryChange: (value: boolean) => void;
+  onChapterHeadingLevelChange: (value: 0 | 1 | 2) => void;
+  onContextToggle: (relativePath: string, nextValue: boolean) => void;
   onModeChange: (mode: SuggestionMode) => void;
   onModelProfileChange: (profile: ModelProfile) => void;
   onSettingsChange: <K extends keyof StolowSettings>(field: K, value: StolowSettings[K]) => void;
   result: GenerateSuggestionsResult | null;
-  rightPanelWidth: number;
   selectedChars: number;
   settings: StolowSettings | null;
 }
 
-function SuggestionPanel({
+function SuggestionPanelBody({
   activeFile,
+  contextFiles,
+  contextSelection,
+  chapterHeadingLevel,
   error,
   expectedSuggestionCount,
   isGenerating,
-  includeNotes,
-  includeSummary,
   mode,
   modelProfile,
   onApply,
   onPreview,
-  onClose,
   onGenerate,
-  onIncludeNotesChange,
-  onIncludeSummaryChange,
+  onChapterHeadingLevelChange,
+  onContextToggle,
   onModeChange,
   onModelProfileChange,
   onSettingsChange,
   result,
-  rightPanelWidth,
   selectedChars,
   settings
-}: SuggestionPanelProps): JSX.Element {
+}: SuggestionPanelBodyProps): JSX.Element {
   const controlsLocked = isGenerating;
   const shortCount =
     result && result.suggestions.length < expectedSuggestionCount
@@ -947,29 +1136,7 @@ function SuggestionPanel({
       : null;
 
   return (
-    <aside
-      className="suggestion-pane"
-      aria-label="AI suggestions"
-      style={{ width: rightPanelWidth, maxWidth: "100%" }}
-    >
-      <div className="panel-heading">
-        <div>
-          <h2>AI サジェスト</h2>
-          <p>{selectedChars > 0 ? "選択範囲リライト" : "次の1段落"}</p>
-        </div>
-        <div className="panel-heading-actions">
-          <button
-            aria-label="AI パネルを閉じる"
-            className="panel-close-button"
-            onClick={onClose}
-            title="パネルを閉じる"
-            type="button"
-          >
-            <X aria-hidden size={16} />
-          </button>
-        </div>
-      </div>
-
+    <>
       <fieldset className="control-block control-fieldset">
         <legend className="control-legend">モード</legend>
         <div className="mode-grid">
@@ -991,23 +1158,37 @@ function SuggestionPanel({
 
       <fieldset className="control-block control-fieldset">
         <legend className="control-legend">参照コンテキスト</legend>
-        <label className="toggle-row">
-          <input
-            checked={includeSummary}
+        {contextFiles.length === 0 ? (
+          <div className="empty-list">context/ に Markdown がありません</div>
+        ) : (
+          contextFiles.map((file) => (
+            <label className="toggle-row" key={file.relativePath}>
+              <input
+                checked={contextSelection[file.relativePath] ?? false}
+                disabled={controlsLocked}
+                onChange={(event) => onContextToggle(file.relativePath, event.target.checked)}
+                type="checkbox"
+              />
+              <span>{file.relativePath}</span>
+            </label>
+          ))
+        )}
+      </fieldset>
+
+      <fieldset className="control-block control-fieldset">
+        <legend className="control-legend">章コンテキスト（カーソル位置）</legend>
+        <label className="settings-input">
+          <span>単位</span>
+          <select
+            className="select-input"
             disabled={controlsLocked}
-            onChange={(event) => onIncludeSummaryChange(event.target.checked)}
-            type="checkbox"
-          />
-          <span>Summary（context/summary.md）</span>
-        </label>
-        <label className="toggle-row">
-          <input
-            checked={includeNotes}
-            disabled={controlsLocked}
-            onChange={(event) => onIncludeNotesChange(event.target.checked)}
-            type="checkbox"
-          />
-          <span>Notes（context/notes.md）</span>
+            value={String(chapterHeadingLevel)}
+            onChange={(e) => onChapterHeadingLevelChange((Number(e.target.value) as 0 | 1 | 2) ?? 0)}
+          >
+            <option value="0">OFF</option>
+            <option value="1">#（章）</option>
+            <option value="2">##（節）</option>
+          </select>
         </label>
       </fieldset>
 
@@ -1130,7 +1311,263 @@ function SuggestionPanel({
           </div>
         ) : null}
       </div>
-    </aside>
+    </>
+  );
+}
+
+function SearchPanel({
+  error,
+  registerFocus,
+  onJump,
+  onRefreshAfterReplace,
+  project,
+  setPanelError,
+  setStatusMessage
+}: {
+  error: string | null;
+  project: ProjectSnapshot | null;
+  registerFocus: (fn: () => void) => void;
+  onJump: (relativePath: string, from: number, to: number) => Promise<void>;
+  onRefreshAfterReplace: () => Promise<void>;
+  setPanelError: (value: string | null) => void;
+  setStatusMessage: (value: string) => void;
+}): JSX.Element {
+  const [query, setQuery] = useState("");
+  const [replace, setReplace] = useState("");
+  const [isRegex, setIsRegex] = useState(false);
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [wholeWord, setWholeWord] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
+  const [result, setResult] = useState<ProjectSearchResult | null>(null);
+  const [preview, setPreview] = useState<ProjectReplacePreviewResult | null>(null);
+  const queryInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    registerFocus(() => {
+      queryInputRef.current?.focus();
+      queryInputRef.current?.select();
+    });
+  }, [registerFocus]);
+
+  const canRun = Boolean(project) && query.trim().length > 0 && !isSearching;
+
+  const runSearch = useCallback(async (): Promise<void> => {
+    if (!project) {
+      setPanelError("プロジェクトを開いてください。");
+      return;
+    }
+    const q = query.trim();
+    if (!q) return;
+    setIsSearching(true);
+    setPanelError(null);
+    setPreview(null);
+    try {
+      const next = await window.stolow.searchProject(project.rootPath, {
+        query: q,
+        isRegex,
+        caseSensitive,
+        wholeWord
+      });
+      setResult(next);
+      setStatusMessage(
+        next.totalMatches > 0
+          ? `検索: ${next.totalMatches.toLocaleString()} 件ヒット`
+          : "検索: ヒットなし"
+      );
+    } catch (e) {
+      setPanelError(e instanceof Error ? e.message : "検索に失敗しました。");
+    } finally {
+      setIsSearching(false);
+    }
+  }, [caseSensitive, isRegex, project, query, setPanelError, setStatusMessage, wholeWord]);
+
+  const runReplacePreview = useCallback(async (): Promise<void> => {
+    if (!project) {
+      setPanelError("プロジェクトを開いてください。");
+      return;
+    }
+    const q = query.trim();
+    if (!q) return;
+    setIsPreviewing(true);
+    setPanelError(null);
+    try {
+      const next = await window.stolow.replacePreview({
+        projectPath: project.rootPath,
+        query: q,
+        replace,
+        isRegex,
+        caseSensitive,
+        wholeWord
+      });
+      setPreview(next);
+      setStatusMessage(
+        next.totalMatches > 0
+          ? `置換プレビュー: ${next.totalMatches.toLocaleString()} 件`
+          : "置換プレビュー: 対象なし"
+      );
+    } catch (e) {
+      setPanelError(e instanceof Error ? e.message : "置換プレビューに失敗しました。");
+    } finally {
+      setIsPreviewing(false);
+    }
+  }, [caseSensitive, isRegex, project, query, replace, setPanelError, setStatusMessage, wholeWord]);
+
+  const runReplaceApply = useCallback(async (): Promise<void> => {
+    if (!project) return;
+    if (!preview || preview.totalMatches === 0) return;
+    setIsApplying(true);
+    setPanelError(null);
+    try {
+      const applied = await window.stolow.replaceApply({
+        projectPath: project.rootPath,
+        query: preview.query,
+        replace: preview.replace,
+        isRegex,
+        caseSensitive,
+        wholeWord
+      });
+      setStatusMessage(
+        `置換: ${applied.totalMatches.toLocaleString()} 件 / ${applied.updatedFiles.toLocaleString()} ファイル更新`
+      );
+      setPreview(null);
+      await onRefreshAfterReplace();
+    } catch (e) {
+      setPanelError(e instanceof Error ? e.message : "置換に失敗しました。");
+    } finally {
+      setIsApplying(false);
+    }
+  }, [caseSensitive, isRegex, onRefreshAfterReplace, preview, project, query, setPanelError, setStatusMessage, wholeWord]);
+
+  return (
+    <>
+      <div className="search-form">
+        <label className="settings-input">
+          <span>検索</span>
+          <input
+            ref={queryInputRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="例: 彼女 / /禁則.*/ / (?:彼|彼女)"
+            spellCheck={false}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void runSearch();
+            }}
+          />
+        </label>
+
+        <fieldset className="control-block control-fieldset">
+          <legend className="control-legend">オプション</legend>
+          <label className="toggle-row">
+            <input checked={isRegex} onChange={(e) => setIsRegex(e.target.checked)} type="checkbox" />
+            <span>正規表現</span>
+          </label>
+          <label className="toggle-row">
+            <input
+              checked={caseSensitive}
+              onChange={(e) => setCaseSensitive(e.target.checked)}
+              type="checkbox"
+            />
+            <span>大/小文字を区別</span>
+          </label>
+          <label className="toggle-row">
+            <input checked={wholeWord} onChange={(e) => setWholeWord(e.target.checked)} type="checkbox" />
+            <span>単語境界（whole word）</span>
+          </label>
+        </fieldset>
+
+        <div className="search-actions">
+          <button className="generate-button" disabled={!canRun} onClick={() => void runSearch()} type="button">
+            {isSearching ? "検索中…" : "検索"}
+          </button>
+        </div>
+
+        <details className="settings-box">
+          <summary>置換</summary>
+          <label className="settings-input">
+            <span>置換後</span>
+            <input value={replace} onChange={(e) => setReplace(e.target.value)} spellCheck={false} />
+          </label>
+          <div className="search-actions">
+            <button
+              className="chip"
+              disabled={!project || !query.trim() || isPreviewing}
+              onClick={() => void runReplacePreview()}
+              type="button"
+            >
+              {isPreviewing ? "プレビュー中…" : "プレビュー"}
+            </button>
+            <button
+              className="primary-action"
+              disabled={!preview || preview.totalMatches === 0 || isApplying}
+              onClick={() => void runReplaceApply()}
+              type="button"
+            >
+              {isApplying ? "適用中…" : "置換を適用"}
+            </button>
+          </div>
+          {preview ? (
+            <div className="hint-box" role="status">
+              {preview.totalMatches.toLocaleString()} 件 / {preview.files.length.toLocaleString()} ファイル
+              {preview.truncated ? "（表示は一部）" : ""}
+            </div>
+          ) : null}
+        </details>
+      </div>
+
+      {error ? (
+        <div className="error-box" role="alert">
+          <AlertCircle aria-hidden size={17} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      <div className="search-results">
+        {result ? (
+          <>
+            <div className="search-summary">
+              <span>
+                {result.totalMatches.toLocaleString()} 件 / {result.files.length.toLocaleString()} ファイル
+                {result.truncated ? "（表示は一部）" : ""}
+              </span>
+            </div>
+            {result.files.map((file) => (
+              <details className="search-file" key={file.relativePath} open={file.matchCount <= 3}>
+                <summary>
+                  <span className="search-file-path">{file.relativePath}</span>
+                  <span className="search-file-count">{file.matchCount.toLocaleString()} 件</span>
+                </summary>
+                <div className="search-hits">
+                  {file.items.slice(0, 50).map((hit, idx) => (
+                    <button
+                      className="search-hit"
+                      key={`${file.relativePath}:${hit.from}:${idx}`}
+                      onClick={() => void onJump(file.relativePath, hit.from, hit.to)}
+                      type="button"
+                      title={`${hit.line}:${hit.column}`}
+                    >
+                      <span className="search-hit-loc">
+                        {hit.line}:{hit.column}
+                      </span>
+                      <span className="search-hit-text">{hit.lineText.trim()}</span>
+                    </button>
+                  ))}
+                  {file.items.length > 50 ? (
+                    <div className="empty-list">このファイルの表示は 50 件までです。</div>
+                  ) : null}
+                </div>
+              </details>
+            ))}
+          </>
+        ) : (
+          <div className="empty-suggestions">
+            <Sparkles aria-hidden size={18} />
+            <span>検索語を入力して「検索」を押してください。</span>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
