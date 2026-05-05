@@ -53,6 +53,10 @@ export interface GenerateSuggestionsPayload {
   selection: EditorSelectionSnapshot;
   includeSummary?: boolean;
   includeNotes?: boolean;
+  /** context/*.md のうち AI に渡す相対パス一覧（未指定なら従来の summary/notes のみ）。 */
+  contextFiles?: string[];
+  /** カーソル位置の見出し単位で章コンテキストを追加する（# / ## など） */
+  chapterHeadingLevel?: 0 | 1 | 2 | 3;
   mode: SuggestionMode;
   modelProfile: ModelProfile;
   settings: StolowSettings;

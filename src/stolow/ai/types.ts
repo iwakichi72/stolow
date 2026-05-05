@@ -25,6 +25,7 @@ export interface GenerationContext {
   selectedText: string;
   summaryText: string;
   notesText: string;
+  chapterText: string;
   headings: string[];
 }
 
@@ -53,6 +54,7 @@ export interface ParsedSuggestions {
 export interface GenerateSuggestionsInput extends GenerateSuggestionsPayload {
   summaryText?: string;
   notesText?: string;
+  chapterText?: string;
 }
 
 export { ModelProfile, StolowSettings, SuggestionCandidate, SuggestionMode };

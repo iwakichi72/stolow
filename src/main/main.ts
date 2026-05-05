@@ -176,18 +176,53 @@ function registerIpcHandlers(): void {
           throw new StolowAiError("PROJECT_NOT_OPEN", "Project is not open.");
         }
 
+        const selectedContextFiles = (payload.contextFiles ?? []).filter((p) => typeof p === "string" && p);
+        const useSelectedFiles = selectedContextFiles.length > 0;
+
         const includeSummary = payload.includeSummary !== false;
         const includeNotes = payload.includeNotes !== false;
 
-        const [summaryText, notesText] = await Promise.all([
-          includeSummary ? readOptionalProjectFile(payload.projectPath, "context/summary.md") : Promise.resolve(""),
-          includeNotes ? readOptionalProjectFile(payload.projectPath, "context/notes.md") : Promise.resolve("")
-        ]);
+        let summaryText = "";
+        let notesText = "";
+        let chapterText = "";
+
+        if (useSelectedFiles) {
+          const contents = await Promise.all(
+            selectedContextFiles.map((relativePath) => readOptionalProjectFile(payload.projectPath, relativePath))
+          );
+
+          // summary.md は専用枠へ、その他は notes 相当としてまとめる
+          const summaryIndex = selectedContextFiles.findIndex((p) => p === "context/summary.md");
+          summaryText = summaryIndex >= 0 ? contents[summaryIndex] ?? "" : "";
+
+          const otherParts: string[] = [];
+          for (let i = 0; i < selectedContextFiles.length; i++) {
+            const rel = selectedContextFiles[i];
+            const text = contents[i] ?? "";
+            if (!text.trim()) continue;
+            if (rel === "context/summary.md") continue;
+            otherParts.push(`# ${rel}\n\n${text.trim()}\n`);
+          }
+          notesText = otherParts.join("\n");
+        } else {
+          const [summary, notes] = await Promise.all([
+            includeSummary ? readOptionalProjectFile(payload.projectPath, "context/summary.md") : Promise.resolve(""),
+            includeNotes ? readOptionalProjectFile(payload.projectPath, "context/notes.md") : Promise.resolve("")
+          ]);
+          summaryText = summary;
+          notesText = notes;
+        }
+
+        const chapterLevel = payload.chapterHeadingLevel ?? 0;
+        if (chapterLevel > 0) {
+          chapterText = extractChapterByHeadingLevel(payload.documentText, payload.selection, payload.cursorPosition, chapterLevel);
+        }
 
         return await generateSuggestions({
           ...payload,
           summaryText,
-          notesText
+          notesText,
+          chapterText
         });
       } catch (error) {
         console.error("AI generation failed", error);
@@ -225,6 +260,61 @@ function registerIpcHandlers(): void {
       return await replaceApplyProjectFiles(rootPath, snapshot.files, normalizedOptions, payload.replace);
     }
   );
+}
+
+function extractChapterByHeadingLevel(
+  documentText: string,
+  selection: { from: number; to: number },
+  cursorPosition: number,
+  headingLevel: number
+): string {
+  const cursor = Math.max(0, Math.min(cursorPosition, documentText.length));
+  const anchor = selection.to > selection.from ? Math.max(0, Math.min(selection.from, documentText.length)) : cursor;
+
+  const lines = documentText.split("\n");
+  const lineOffsets: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineOffsets.push(offset);
+    offset += line.length + 1;
+  }
+
+  const lineIndex = (() => {
+    let idx = 0;
+    for (let i = 0; i < lineOffsets.length; i++) {
+      if (lineOffsets[i] <= anchor) idx = i;
+      else break;
+    }
+    return idx;
+  })();
+
+  const headingRe = /^(\#{1,6})\s+(.+)$/;
+  const isHeadingLine = (line: string): number | null => {
+    const m = headingRe.exec(line);
+    if (!m) return null;
+    return m[1]?.length ?? null;
+  };
+
+  let startLine = 0;
+  for (let i = lineIndex; i >= 0; i--) {
+    const level = isHeadingLine(lines[i] ?? "");
+    if (level !== null && level <= headingLevel) {
+      startLine = i;
+      break;
+    }
+  }
+
+  let endLine = lines.length;
+  for (let i = startLine + 1; i < lines.length; i++) {
+    const level = isHeadingLine(lines[i] ?? "");
+    if (level !== null && level <= headingLevel) {
+      endLine = i;
+      break;
+    }
+  }
+
+  const slice = lines.slice(startLine, endLine).join("\n").trim();
+  return slice;
 }
 
 async function ensureProject(rootPath: string): Promise<void> {

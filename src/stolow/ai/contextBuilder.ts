@@ -6,6 +6,7 @@ const AFTER_LIMIT = 500;
 const SUMMARY_LIMIT = 1500;
 const NOTES_LIMIT = 800;
 const SELECTION_LIMIT = 4000;
+const CHAPTER_LIMIT = 5000;
 
 export function buildGenerationContext(input: GenerateSuggestionsInput): GenerationContext {
   const selectionFrom = Math.max(0, Math.min(input.selection.from, input.documentText.length));
@@ -22,6 +23,7 @@ export function buildGenerationContext(input: GenerateSuggestionsInput): Generat
     selectedText: hasSelection ? takeFirst(input.documentText.slice(selectionFrom, selectionTo), SELECTION_LIMIT) : "",
     summaryText: takeFirst(input.summaryText ?? "", SUMMARY_LIMIT),
     notesText: takeFirst(input.notesText ?? "", NOTES_LIMIT),
+    chapterText: takeFirst(input.chapterText ?? "", CHAPTER_LIMIT),
     headings: extractMarkdownHeadings(input.documentText)
   };
 }

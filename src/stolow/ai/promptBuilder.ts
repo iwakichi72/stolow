@@ -53,6 +53,10 @@ export function buildPromptMessages(input: PromptBuildInput): ChatMessage[] {
     userParts.push("# プロジェクト context/notes.md（参考）", fenceBlock(context.notesText), "");
   }
 
+  if (isMeaningfulContextMarkdown(context.chapterText)) {
+    userParts.push("# 現在の章（見出し単位の抜粋。参考）", fenceBlock(context.chapterText), "");
+  }
+
   userParts.push(
     "# 見出し（原稿内）",
     context.headings.length > 0 ? context.headings.join("\n") : "(なし)",
