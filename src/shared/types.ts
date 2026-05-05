@@ -76,6 +76,53 @@ export interface SaveFileResult {
   savedAt: string;
 }
 
+export interface ProjectSearchOptions {
+  query: string;
+  isRegex?: boolean;
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+}
+
+export interface ProjectSearchMatch {
+  relativePath: string;
+  matchCount: number;
+  items: Array<{
+    from: number;
+    to: number;
+    line: number;
+    column: number;
+    lineText: string;
+  }>;
+}
+
+export interface ProjectSearchResult {
+  query: string;
+  options: Required<Pick<ProjectSearchOptions, "isRegex" | "caseSensitive" | "wholeWord">>;
+  totalMatches: number;
+  files: ProjectSearchMatch[];
+  truncated: boolean;
+}
+
+export interface ProjectReplacePreviewPayload extends ProjectSearchOptions {
+  projectPath: string;
+  replace: string;
+}
+
+export interface ProjectReplacePreviewResult {
+  query: string;
+  replace: string;
+  totalMatches: number;
+  files: Array<{ relativePath: string; matchCount: number }>;
+  truncated: boolean;
+}
+
+export interface ProjectReplaceApplyPayload extends ProjectReplacePreviewPayload {}
+
+export interface ProjectReplaceApplyResult {
+  totalMatches: number;
+  updatedFiles: number;
+}
+
 export interface StolowApi {
   openProject: () => Promise<ProjectSnapshot | null>;
   refreshProject: (projectPath: string) => Promise<ProjectSnapshot>;
@@ -84,4 +131,7 @@ export interface StolowApi {
   createMarkdownFile: (projectPath: string, relativePath: string) => Promise<ProjectFile>;
   updateSettings: (projectPath: string, settings: StolowSettings) => Promise<StolowSettings>;
   generateSuggestions: (payload: GenerateSuggestionsPayload) => Promise<GenerateSuggestionsResult>;
+  searchProject: (projectPath: string, options: ProjectSearchOptions) => Promise<ProjectSearchResult>;
+  replacePreview: (payload: ProjectReplacePreviewPayload) => Promise<ProjectReplacePreviewResult>;
+  replaceApply: (payload: ProjectReplaceApplyPayload) => Promise<ProjectReplaceApplyResult>;
 }

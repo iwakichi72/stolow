@@ -8,6 +8,12 @@ import type {
   ProjectFile,
   ProjectFileKind,
   ProjectSnapshot,
+  ProjectReplaceApplyPayload,
+  ProjectReplaceApplyResult,
+  ProjectReplacePreviewPayload,
+  ProjectReplacePreviewResult,
+  ProjectSearchOptions,
+  ProjectSearchResult,
   SaveFileResult,
   StolowSettings
 } from "../shared/types.js";
@@ -31,6 +37,8 @@ function canonicalProjectRoot(rawPath: string): string {
 app.setName("Stolow");
 const PROJECT_VERSION = 1;
 const MAX_PROJECT_FILES = 1000;
+const MAX_SEARCH_MATCHES = 2000;
+const MAX_SEARCH_FILES_WITH_MATCHES = 250;
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -185,6 +193,36 @@ function registerIpcHandlers(): void {
         console.error("AI generation failed", error);
         throw new Error(toUserFacingAiMessage(error));
       }
+    }
+  );
+
+  ipcMain.handle(
+    "project:search",
+    async (_event, projectPath: string, options: ProjectSearchOptions): Promise<ProjectSearchResult> => {
+      const rootPath = canonicalProjectRoot(projectPath);
+      const snapshot = await readProjectSnapshot(rootPath);
+      const normalizedOptions = normalizeSearchOptions(options);
+      return await searchProjectFiles(rootPath, snapshot.files, normalizedOptions);
+    }
+  );
+
+  ipcMain.handle(
+    "project:replacePreview",
+    async (_event, payload: ProjectReplacePreviewPayload): Promise<ProjectReplacePreviewResult> => {
+      const rootPath = canonicalProjectRoot(payload.projectPath);
+      const snapshot = await readProjectSnapshot(rootPath);
+      const normalizedOptions = normalizeSearchOptions(payload);
+      return await replacePreviewProjectFiles(rootPath, snapshot.files, normalizedOptions, payload.replace);
+    }
+  );
+
+  ipcMain.handle(
+    "project:replaceApply",
+    async (_event, payload: ProjectReplaceApplyPayload): Promise<ProjectReplaceApplyResult> => {
+      const rootPath = canonicalProjectRoot(payload.projectPath);
+      const snapshot = await readProjectSnapshot(rootPath);
+      const normalizedOptions = normalizeSearchOptions(payload);
+      return await replaceApplyProjectFiles(rootPath, snapshot.files, normalizedOptions, payload.replace);
     }
   );
 }
@@ -384,4 +422,213 @@ function toUserFacingAiMessage(error: unknown): string {
     default:
       return "AI生成に失敗しました。詳細は開発者コンソールを確認してください。";
   }
+}
+
+function normalizeSearchOptions(options: ProjectSearchOptions): Required<ProjectSearchOptions> {
+  return {
+    query: options.query ?? "",
+    isRegex: options.isRegex ?? false,
+    caseSensitive: options.caseSensitive ?? false,
+    wholeWord: options.wholeWord ?? false
+  };
+}
+
+function compileSearchRegExp(options: Required<ProjectSearchOptions>): RegExp | null {
+  const query = options.query.trim();
+  if (!query) return null;
+
+  let source = query;
+  if (!options.isRegex) {
+    source = escapeRegExp(query);
+  }
+  if (options.wholeWord) {
+    source = `\\b(?:${source})\\b`;
+  }
+
+  const flags = `g${options.caseSensitive ? "" : "i"}`;
+  try {
+    return new RegExp(source, flags);
+  } catch {
+    throw new Error("正規表現が不正です。");
+  }
+}
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function computeLineInfo(text: string, index: number): { line: number; column: number; lineText: string } {
+  const before = text.slice(0, index);
+  const line = before.split("\n").length;
+  const lastNl = before.lastIndexOf("\n");
+  const lineStart = lastNl === -1 ? 0 : lastNl + 1;
+  const nextNl = text.indexOf("\n", index);
+  const lineEnd = nextNl === -1 ? text.length : nextNl;
+  const column = index - lineStart + 1;
+  const lineText = text.slice(lineStart, lineEnd);
+  return { line, column, lineText };
+}
+
+async function searchProjectFiles(
+  projectRoot: string,
+  files: ProjectFile[],
+  options: Required<ProjectSearchOptions>
+): Promise<ProjectSearchResult> {
+  const re = compileSearchRegExp(options);
+  if (!re) {
+    return { query: options.query, options, totalMatches: 0, files: [], truncated: false };
+  }
+
+  let totalMatches = 0;
+  let truncated = false;
+  const matchesByFile: ProjectSearchResult["files"] = [];
+
+  for (const file of files) {
+    if (matchesByFile.length >= MAX_SEARCH_FILES_WITH_MATCHES) {
+      truncated = true;
+      break;
+    }
+    const filePath = resolveProjectMarkdownPath(projectRoot, file.relativePath);
+    let text = "";
+    try {
+      text = await fs.readFile(filePath, "utf8");
+    } catch {
+      continue;
+    }
+
+    re.lastIndex = 0;
+    const items: ProjectSearchResult["files"][number]["items"] = [];
+    let fileMatchCount = 0;
+
+    while (true) {
+      const m = re.exec(text);
+      if (!m) break;
+      const from = m.index;
+      const to = m.index + (m[0]?.length ?? 0);
+      fileMatchCount += 1;
+      totalMatches += 1;
+
+      const { line, column, lineText } = computeLineInfo(text, from);
+      items.push({ from, to, line, column, lineText });
+
+      if (totalMatches >= MAX_SEARCH_MATCHES) {
+        truncated = true;
+        break;
+      }
+      if (m[0]?.length === 0) {
+        // avoid infinite loop on zero-width matches
+        re.lastIndex += 1;
+      }
+    }
+
+    if (fileMatchCount > 0) {
+      matchesByFile.push({
+        relativePath: file.relativePath,
+        matchCount: fileMatchCount,
+        items
+      });
+    }
+    if (truncated) break;
+  }
+
+  return {
+    query: options.query,
+    options,
+    totalMatches,
+    files: matchesByFile,
+    truncated
+  };
+}
+
+async function replacePreviewProjectFiles(
+  projectRoot: string,
+  files: ProjectFile[],
+  options: Required<ProjectSearchOptions>,
+  replace: string
+): Promise<ProjectReplacePreviewResult> {
+  const re = compileSearchRegExp(options);
+  if (!re) {
+    return { query: options.query, replace, totalMatches: 0, files: [], truncated: false };
+  }
+
+  let totalMatches = 0;
+  let truncated = false;
+  const perFile: Array<{ relativePath: string; matchCount: number }> = [];
+
+  for (const file of files) {
+    if (perFile.length >= MAX_SEARCH_FILES_WITH_MATCHES) {
+      truncated = true;
+      break;
+    }
+    const filePath = resolveProjectMarkdownPath(projectRoot, file.relativePath);
+    let text = "";
+    try {
+      text = await fs.readFile(filePath, "utf8");
+    } catch {
+      continue;
+    }
+
+    re.lastIndex = 0;
+    let count = 0;
+    while (true) {
+      const m = re.exec(text);
+      if (!m) break;
+      count += 1;
+      totalMatches += 1;
+      if (totalMatches >= MAX_SEARCH_MATCHES) {
+        truncated = true;
+        break;
+      }
+      if (m[0]?.length === 0) re.lastIndex += 1;
+    }
+
+    if (count > 0) perFile.push({ relativePath: file.relativePath, matchCount: count });
+    if (truncated) break;
+  }
+
+  return { query: options.query, replace, totalMatches, files: perFile, truncated };
+}
+
+async function replaceApplyProjectFiles(
+  projectRoot: string,
+  files: ProjectFile[],
+  options: Required<ProjectSearchOptions>,
+  replace: string
+): Promise<ProjectReplaceApplyResult> {
+  const re = compileSearchRegExp(options);
+  if (!re) return { totalMatches: 0, updatedFiles: 0 };
+
+  let totalMatches = 0;
+  let updatedFiles = 0;
+
+  for (const file of files) {
+    const filePath = resolveProjectMarkdownPath(projectRoot, file.relativePath);
+    let text = "";
+    try {
+      text = await fs.readFile(filePath, "utf8");
+    } catch {
+      continue;
+    }
+
+    re.lastIndex = 0;
+    let count = 0;
+    while (true) {
+      const m = re.exec(text);
+      if (!m) break;
+      count += 1;
+      if (m[0]?.length === 0) re.lastIndex += 1;
+    }
+    if (count === 0) continue;
+
+    // Apply
+    re.lastIndex = 0;
+    const next = text.replace(re, replace);
+    if (next !== text) {
+      await fs.writeFile(filePath, next, "utf8");
+      updatedFiles += 1;
+      totalMatches += count;
+    }
+  }
+
+  return { totalMatches, updatedFiles };
 }

@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { GenerateSuggestionsPayload, StolowApi, StolowSettings } from "../shared/types.js";
+import type {
+  GenerateSuggestionsPayload,
+  ProjectReplaceApplyPayload,
+  ProjectReplacePreviewPayload,
+  ProjectSearchOptions,
+  StolowApi,
+  StolowSettings
+} from "../shared/types.js";
 
 const api: StolowApi = {
   openProject: () => ipcRenderer.invoke("project:open"),
@@ -12,7 +19,12 @@ const api: StolowApi = {
     ipcRenderer.invoke("file:create", projectPath, relativePath),
   updateSettings: (projectPath: string, settings: StolowSettings) =>
     ipcRenderer.invoke("settings:update", projectPath, settings),
-  generateSuggestions: (payload: GenerateSuggestionsPayload) => ipcRenderer.invoke("ai:generate", payload)
+  generateSuggestions: (payload: GenerateSuggestionsPayload) => ipcRenderer.invoke("ai:generate", payload),
+  searchProject: (projectPath: string, options: ProjectSearchOptions) =>
+    ipcRenderer.invoke("project:search", projectPath, options),
+  replacePreview: (payload: ProjectReplacePreviewPayload) =>
+    ipcRenderer.invoke("project:replacePreview", payload),
+  replaceApply: (payload: ProjectReplaceApplyPayload) => ipcRenderer.invoke("project:replaceApply", payload)
 };
 
 contextBridge.exposeInMainWorld("stolow", api);
