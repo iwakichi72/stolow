@@ -26,6 +26,11 @@ export interface StolowSettings {
   requestTimeoutMs: number;
 }
 
+export interface StolowAppSettings {
+  /** プロジェクトを開いたときに manuscript/context などを自動生成する */
+  autoCreateProjectStructure: boolean;
+}
+
 export interface ProjectFile {
   relativePath: string;
   name: string;
@@ -130,9 +135,13 @@ export interface ProjectReplaceApplyResult {
 export interface StolowApi {
   openProject: () => Promise<ProjectSnapshot | null>;
   refreshProject: (projectPath: string) => Promise<ProjectSnapshot>;
+  getCurrentProjectSnapshot: () => Promise<ProjectSnapshot | null>;
+  openSettingsWindow: () => Promise<void>;
   readFile: (projectPath: string, relativePath: string) => Promise<string>;
   saveFile: (projectPath: string, relativePath: string, contents: string) => Promise<SaveFileResult>;
   createMarkdownFile: (projectPath: string, relativePath: string) => Promise<ProjectFile>;
+  getAppSettings: () => Promise<StolowAppSettings>;
+  updateAppSettings: (settings: StolowAppSettings) => Promise<StolowAppSettings>;
   updateSettings: (projectPath: string, settings: StolowSettings) => Promise<StolowSettings>;
   generateSuggestions: (payload: GenerateSuggestionsPayload) => Promise<GenerateSuggestionsResult>;
   searchProject: (projectPath: string, options: ProjectSearchOptions) => Promise<ProjectSearchResult>;

@@ -410,6 +410,7 @@ export function App(): JSX.Element {
     setMode(project.settings.defaultMode);
   }, [project]);
 
+
   useEffect(() => {
     if (!project) return;
     const next: Record<string, boolean> = {};
@@ -1301,44 +1302,16 @@ function SuggestionPanelBody({
         </div>
       </fieldset>
 
-      {settings ? (
-        <details className="settings-box">
-          <summary>接続とモデル名</summary>
-          <SettingsInput
-            autoComplete="off"
-            inputMode="url"
-            label="Ollama URL"
-            name="stolow-ollama-url"
-            spellCheck={false}
-            value={settings.ollamaUrl}
-            onChange={(value) => onSettingsChange("ollamaUrl", value)}
-          />
-          <SettingsInput
-            autoComplete="off"
-            label="Default"
-            name="stolow-model-default"
-            spellCheck={false}
-            value={settings.defaultModel}
-            onChange={(value) => onSettingsChange("defaultModel", value)}
-          />
-          <SettingsInput
-            autoComplete="off"
-            label="Quick"
-            name="stolow-model-quick"
-            spellCheck={false}
-            value={settings.quickModel}
-            onChange={(value) => onSettingsChange("quickModel", value)}
-          />
-          <SettingsInput
-            autoComplete="off"
-            label="Quality"
-            name="stolow-model-quality"
-            spellCheck={false}
-            value={settings.qualityModel}
-            onChange={(value) => onSettingsChange("qualityModel", value)}
-          />
-        </details>
-      ) : null}
+      <button
+        className="chip"
+        disabled={controlsLocked}
+        onClick={() => {
+          void window.stolow?.openSettingsWindow();
+        }}
+        type="button"
+      >
+        接続/モデル/アプリ設定…
+      </button>
 
       <button
         className="generate-button"

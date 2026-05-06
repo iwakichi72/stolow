@@ -5,18 +5,23 @@ import type {
   ProjectReplacePreviewPayload,
   ProjectSearchOptions,
   StolowApi,
+  StolowAppSettings,
   StolowSettings
 } from "../shared/types.js";
 
 const api: StolowApi = {
   openProject: () => ipcRenderer.invoke("project:open"),
   refreshProject: (projectPath: string) => ipcRenderer.invoke("project:refresh", projectPath),
+  getCurrentProjectSnapshot: () => ipcRenderer.invoke("project:getCurrentSnapshot"),
+  openSettingsWindow: () => ipcRenderer.invoke("window:openSettings"),
   readFile: (projectPath: string, relativePath: string) =>
     ipcRenderer.invoke("file:read", projectPath, relativePath),
   saveFile: (projectPath: string, relativePath: string, contents: string) =>
     ipcRenderer.invoke("file:save", projectPath, relativePath, contents),
   createMarkdownFile: (projectPath: string, relativePath: string) =>
     ipcRenderer.invoke("file:create", projectPath, relativePath),
+  getAppSettings: () => ipcRenderer.invoke("appSettings:get"),
+  updateAppSettings: (settings: StolowAppSettings) => ipcRenderer.invoke("appSettings:update", settings),
   updateSettings: (projectPath: string, settings: StolowSettings) =>
     ipcRenderer.invoke("settings:update", projectPath, settings),
   generateSuggestions: (payload: GenerateSuggestionsPayload) => ipcRenderer.invoke("ai:generate", payload),

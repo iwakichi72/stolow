@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
   GenerateSuggestionsPayload,
   ProjectFile,
@@ -15,6 +15,7 @@ import type {
   ProjectSearchOptions,
   ProjectSearchResult,
   SaveFileResult,
+  StolowAppSettings,
   StolowSettings
 } from "../shared/types.js";
 import { DEFAULT_STOLOW_SETTINGS, normalizeSettings } from "../stolow/ai/config.js";
@@ -41,6 +42,29 @@ const MAX_SEARCH_MATCHES = 2000;
 const MAX_SEARCH_FILES_WITH_MATCHES = 250;
 
 let mainWindow: BrowserWindow | null = null;
+let settingsWindow: BrowserWindow | null = null;
+let currentProjectRoot: string | null = null;
+
+const DEFAULT_APP_SETTINGS: StolowAppSettings = {
+  autoCreateProjectStructure: true
+};
+
+function appSettingsPath(): string {
+  return path.join(app.getPath("userData"), "stolow.app-settings.json");
+}
+
+async function readAppSettings(): Promise<StolowAppSettings> {
+  const raw = await readJsonIfExists<Partial<StolowAppSettings>>(appSettingsPath());
+  return {
+    ...DEFAULT_APP_SETTINGS,
+    ...(raw ?? {})
+  };
+}
+
+async function writeAppSettings(settings: StolowAppSettings): Promise<void> {
+  await fs.mkdir(path.dirname(appSettingsPath()), { recursive: true });
+  await writeJson(appSettingsPath(), settings);
+}
 
 function resolveWindowIcon(): string | undefined {
   const candidates = app.isPackaged
@@ -77,6 +101,46 @@ function createWindow(): void {
   }
 }
 
+function openSettingsWindow(): void {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.show();
+    settingsWindow.focus();
+    return;
+  }
+
+  settingsWindow = new BrowserWindow({
+    width: 560,
+    height: 680,
+    minWidth: 480,
+    minHeight: 520,
+    title: "Stolow 設定",
+    icon: resolveWindowIcon(),
+    backgroundColor: "#191712",
+    parent: mainWindow ?? undefined,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  settingsWindow.on("closed", () => {
+    settingsWindow = null;
+  });
+
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    const url = new URL(devServerUrl);
+    url.searchParams.set("view", "settings");
+    void settingsWindow.loadURL(url.toString());
+  } else {
+    const indexPath = path.resolve(__dirname, "../../dist/renderer/index.html");
+    const url = new URL(pathToFileURL(indexPath).toString());
+    url.searchParams.set("view", "settings");
+    void settingsWindow.loadURL(url.toString());
+  }
+}
+
 app.whenReady().then(() => {
   registerIpcHandlers();
   createWindow();
@@ -91,6 +155,27 @@ app.on("window-all-closed", () => {
 });
 
 function registerIpcHandlers(): void {
+  ipcMain.handle("window:openSettings", async (): Promise<void> => {
+    openSettingsWindow();
+  });
+
+  ipcMain.handle("project:getCurrentSnapshot", async (): Promise<ProjectSnapshot | null> => {
+    if (!currentProjectRoot) return null;
+    return await readProjectSnapshot(currentProjectRoot);
+  });
+
+  ipcMain.handle("appSettings:get", async (): Promise<StolowAppSettings> => {
+    return await readAppSettings();
+  });
+
+  ipcMain.handle("appSettings:update", async (_event, settings: StolowAppSettings): Promise<StolowAppSettings> => {
+    const next: StolowAppSettings = {
+      autoCreateProjectStructure: settings?.autoCreateProjectStructure !== false
+    };
+    await writeAppSettings(next);
+    return next;
+  });
+
   ipcMain.handle("project:open", async (): Promise<ProjectSnapshot | null> => {
     const options: OpenDialogOptions = {
       title: "Stolowプロジェクトを開く",
@@ -104,13 +189,21 @@ function registerIpcHandlers(): void {
 
     const rawRoot = result.filePaths[0];
     const rootPath = canonicalProjectRoot(rawRoot);
-    await ensureProject(rootPath);
+    const appSettings = await readAppSettings();
+    if (appSettings.autoCreateProjectStructure) {
+      await ensureProject(rootPath);
+    }
+    currentProjectRoot = rootPath;
     return readProjectSnapshot(rootPath);
   });
 
   ipcMain.handle("project:refresh", async (_event, projectPath: string): Promise<ProjectSnapshot> => {
     const rootPath = canonicalProjectRoot(projectPath);
-    await ensureProject(rootPath);
+    const appSettings = await readAppSettings();
+    if (appSettings.autoCreateProjectStructure) {
+      await ensureProject(rootPath);
+    }
+    currentProjectRoot = rootPath;
     return readProjectSnapshot(rootPath);
   });
 
