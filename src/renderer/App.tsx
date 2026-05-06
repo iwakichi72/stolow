@@ -108,6 +108,9 @@ export function App(): JSX.Element {
   const [isGenerating, setIsGenerating] = useState(false);
   const [statusMessage, setStatusMessage] = useState("プロジェクトを開いてください。");
   const [panelError, setPanelError] = useState<string | null>(null);
+  const [newFileModal, setNewFileModal] = useState<null | { folder: "manuscript" | "context"; value: string }>(
+    null
+  );
   const [sidebarWidth, setSidebarWidth] = useState(() =>
     readStoredNumber(LAYOUT_STORAGE_KEYS.sidebarWidth, 260)
   );
@@ -502,33 +505,43 @@ export function App(): JSX.Element {
       }
 
       const defaultStem = folder === "manuscript" ? "new-scene" : "new-note";
-      const message =
-        folder === "manuscript"
-          ? "manuscript に新規 Markdown（ファイル名のみ。拡張子は省略可）"
-          : "context に新規 Markdown（ファイル名のみ。拡張子は省略可）";
-      const input = window.prompt(message, defaultStem);
-      if (input === null) return;
-
-      let base = input.trim().replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "";
-      if (!base) return;
-      if (!base.toLowerCase().endsWith(".md")) {
-        base = `${base}.md`;
-      }
-
-      const relativePath = `${folder}/${base}`;
       setPanelError(null);
-
-      try {
-        const created = await window.stolow.createMarkdownFile(project.rootPath, relativePath);
-        await refreshProject(project.rootPath, created);
-        setStatusMessage(`${created.relativePath} を作成しました。`);
-      } catch (error) {
-        console.error(error);
-        setPanelError(error instanceof Error ? error.message : "ファイルを作成できませんでした。");
-      }
+      setNewFileModal({ folder, value: defaultStem });
     },
     [isDirty, project, refreshProject]
   );
+
+  const submitNewFile = useCallback(async (): Promise<void> => {
+    if (!project || !newFileModal) return;
+    if (isDirty) {
+      setPanelError("未保存の変更があります。保存してから新規ファイルを作成してください。");
+      setStatusMessage("未保存の変更があります。保存してから新規ファイルを作成してください。");
+      return;
+    }
+
+    const { folder, value } = newFileModal;
+    let base = value.trim().replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "";
+    if (!base) {
+      setPanelError("ファイル名を入力してください。");
+      return;
+    }
+    if (!base.toLowerCase().endsWith(".md")) {
+      base = `${base}.md`;
+    }
+
+    const relativePath = `${folder}/${base}`;
+    setPanelError(null);
+
+    try {
+      const created = await window.stolow.createMarkdownFile(project.rootPath, relativePath);
+      setNewFileModal(null);
+      await refreshProject(project.rootPath, created);
+      setStatusMessage(`${created.relativePath} を作成しました。`);
+    } catch (error) {
+      console.error(error);
+      setPanelError(error instanceof Error ? error.message : "ファイルを作成できませんでした。");
+    }
+  }, [isDirty, newFileModal, project, refreshProject]);
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent): void => {
@@ -645,6 +658,9 @@ export function App(): JSX.Element {
           if (project) void refreshProject(project.rootPath, activeFile);
         }}
         onSave={saveFile}
+        onUiPing={() => {
+          // no-op
+        }}
         project={project}
         sidebarWidth={sidebarWidth}
       />
@@ -891,6 +907,62 @@ export function App(): JSX.Element {
           </div>
         </div>
       ) : null}
+      {newFileModal ? (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="新規 Markdown を作成"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setNewFileModal(null);
+          }}
+        >
+          <div className="modal">
+            <div className="modal-header">
+              <div>
+                <h3>新規 Markdown</h3>
+                <p>
+                  {newFileModal.folder === "manuscript"
+                    ? "manuscript/ に作成します（拡張子は省略可）"
+                    : "context/ に作成します（拡張子は省略可）"}
+                </p>
+              </div>
+              <div className="modal-actions">
+                <button className="icon-button" onClick={() => setNewFileModal(null)} type="button">
+                  <X aria-hidden size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="modal-grid" style={{ gridTemplateColumns: "1fr" }}>
+              <section className="modal-pane">
+                <h4>ファイル名</h4>
+                <div style={{ padding: 12 }}>
+                  <input
+                    autoFocus
+                    className="select-input"
+                    value={newFileModal.value}
+                    onChange={(e) => setNewFileModal((cur) => (cur ? { ...cur, value: e.target.value } : cur))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void submitNewFile();
+                      if (e.key === "Escape") setNewFileModal(null);
+                    }}
+                    placeholder="例: 02-first-meeting"
+                    spellCheck={false}
+                  />
+                </div>
+              </section>
+            </div>
+            <div className="modal-footer">
+              <button className="chip" onClick={() => setNewFileModal(null)} type="button">
+                キャンセル
+              </button>
+              <button className="primary-action" onClick={() => void submitNewFile()} type="button">
+                作成
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -906,6 +978,7 @@ interface ProjectSidebarProps {
   onOpenProject: () => void;
   onRefresh: () => void;
   onSave: () => void;
+  onUiPing: (message: string) => void;
   project: ProjectSnapshot | null;
   sidebarWidth: number;
 }
@@ -921,6 +994,7 @@ function ProjectSidebar({
   onOpenProject,
   onRefresh,
   onSave,
+  onUiPing,
   project,
   sidebarWidth
 }: ProjectSidebarProps): JSX.Element {
@@ -946,7 +1020,12 @@ function ProjectSidebar({
         </div>
       ) : null}
 
-      <div className="toolbar">
+      <div
+        className="toolbar"
+        onMouseDownCapture={() => {
+          onUiPing("toolbar mousedown");
+        }}
+      >
         <button
           aria-busy={isOpening}
           className="primary-action"
@@ -986,9 +1065,15 @@ function ProjectSidebar({
         <button
           aria-label="manuscript に新規 Markdown"
           className="icon-button"
-          disabled={!project}
-          onClick={() => onCreateMarkdown("manuscript")}
-          title="原稿（manuscript）に新規 .md"
+          onClick={() => {
+            onUiPing("new manuscript click");
+            if (!project) {
+              onOpenProject();
+              return;
+            }
+            onCreateMarkdown("manuscript");
+          }}
+          title={project ? "原稿（manuscript）に新規 .md" : "先にプロジェクトを開いてください"}
           type="button"
         >
           <FilePlus aria-hidden size={16} />
@@ -996,9 +1081,15 @@ function ProjectSidebar({
         <button
           aria-label="context に新規 Markdown"
           className="icon-button"
-          disabled={!project}
-          onClick={() => onCreateMarkdown("context")}
-          title="Context に新規 .md"
+          onClick={() => {
+            onUiPing("new context click");
+            if (!project) {
+              onOpenProject();
+              return;
+            }
+            onCreateMarkdown("context");
+          }}
+          title={project ? "Context に新規 .md" : "先にプロジェクトを開いてください"}
           type="button"
         >
           <StickyNote aria-hidden size={16} />
