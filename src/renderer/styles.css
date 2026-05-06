@@ -560,6 +560,115 @@ button:disabled {
   border-left-color: var(--accent-strong);
 }
 
+.editor-host .cm-panels {
+  border-top: 1px solid var(--line);
+  background: rgba(33, 31, 26, 0.98);
+  color: var(--text);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+
+.editor-host .cm-panels .cm-panel {
+  padding: 10px 12px;
+  background: transparent;
+  color: inherit;
+}
+
+.editor-host .cm-panels input,
+.editor-host .cm-panels button,
+.editor-host .cm-panels select {
+  font: inherit;
+}
+
+.editor-host .cm-panels input[type="text"],
+.editor-host .cm-panels input[type="search"],
+.editor-host .cm-panels textarea {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--line) !important;
+  border-radius: 6px !important;
+  color: var(--text) !important;
+  background: #171611 !important;
+  -webkit-text-fill-color: var(--text);
+  padding: 6px 8px !important;
+}
+
+.cm-editor .cm-panels .cm-textfield,
+.cm-editor .cm-panels input,
+.cm-editor .cm-panels textarea {
+  border: 1px solid var(--line) !important;
+  border-radius: 6px !important;
+  color: var(--text) !important;
+  background: #171611 !important;
+  -webkit-text-fill-color: var(--text);
+}
+
+.cm-editor .cm-panels .cm-textfield:disabled,
+.cm-editor .cm-panels input:disabled,
+.cm-editor .cm-panels textarea:disabled {
+  opacity: 0.65;
+}
+
+.editor-host .cm-panels textarea {
+  resize: vertical;
+  min-height: 32px;
+}
+
+.editor-host .cm-panels input::placeholder {
+  color: rgba(159, 151, 137, 0.78);
+}
+
+.editor-host .cm-panels textarea::placeholder {
+  color: rgba(159, 151, 137, 0.78);
+}
+
+.cm-editor .cm-panels .cm-textfield::placeholder {
+  color: rgba(159, 151, 137, 0.78);
+}
+
+.editor-host .cm-panels input:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.editor-host .cm-panels textarea:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.cm-editor .cm-panels .cm-textfield:focus-visible,
+.cm-editor .cm-panels input:focus-visible,
+.cm-editor .cm-panels textarea:focus-visible {
+  outline: 2px solid var(--accent-strong) !important;
+  outline-offset: 2px !important;
+}
+
+.editor-host .cm-panels input::selection,
+.editor-host .cm-panels textarea::selection {
+  background: rgba(108, 195, 162, 0.32);
+}
+
+.editor-host .cm-panels button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--button);
+  padding: 6px 10px;
+}
+
+.editor-host .cm-panels button:hover {
+  background: var(--button-hover);
+}
+
+.editor-host .cm-panels label {
+  color: var(--muted);
+}
+
 .suggestion-pane {
   flex-shrink: 0;
   min-width: 0;
@@ -857,6 +966,29 @@ button:disabled {
     system-ui,
     sans-serif;
   font-size: 13px;
+}
+
+.search-form input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: #171611;
+  padding: 8px 9px;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+  font-size: 13px;
+}
+
+.search-form input::placeholder {
+  color: rgba(159, 151, 137, 0.78);
+}
+
+.search-form input:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
 }
 
 .select-input {
