@@ -11,6 +11,7 @@ import type {
 
 const api: StolowApi = {
   openProject: () => ipcRenderer.invoke("project:open"),
+  openLastProject: () => ipcRenderer.invoke("project:openLast"),
   refreshProject: (projectPath: string) => ipcRenderer.invoke("project:refresh", projectPath),
   getCurrentProjectSnapshot: () => ipcRenderer.invoke("project:getCurrentSnapshot"),
   openSettingsWindow: () => ipcRenderer.invoke("window:openSettings"),

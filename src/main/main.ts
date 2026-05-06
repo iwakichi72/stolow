@@ -46,7 +46,8 @@ let settingsWindow: BrowserWindow | null = null;
 let currentProjectRoot: string | null = null;
 
 const DEFAULT_APP_SETTINGS: StolowAppSettings = {
-  autoCreateProjectStructure: true
+  autoCreateProjectStructure: true,
+  lastOpenedProjectPath: undefined
 };
 
 function appSettingsPath(): string {
@@ -64,6 +65,15 @@ async function readAppSettings(): Promise<StolowAppSettings> {
 async function writeAppSettings(settings: StolowAppSettings): Promise<void> {
   await fs.mkdir(path.dirname(appSettingsPath()), { recursive: true });
   await writeJson(appSettingsPath(), settings);
+}
+
+async function persistLastOpenedProjectPath(projectPath: string): Promise<void> {
+  const current = await readAppSettings();
+  const next: StolowAppSettings = {
+    ...current,
+    lastOpenedProjectPath: projectPath
+  };
+  await writeAppSettings(next);
 }
 
 function resolveWindowIcon(): string | undefined {
@@ -170,10 +180,26 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("appSettings:update", async (_event, settings: StolowAppSettings): Promise<StolowAppSettings> => {
     const next: StolowAppSettings = {
-      autoCreateProjectStructure: settings?.autoCreateProjectStructure !== false
+      autoCreateProjectStructure: settings?.autoCreateProjectStructure !== false,
+      // lastOpenedProjectPath は内部で更新する（ユーザーがここから直接書き換えない想定）
+      lastOpenedProjectPath: (await readAppSettings()).lastOpenedProjectPath
     };
     await writeAppSettings(next);
     return next;
+  });
+
+  ipcMain.handle("project:openLast", async (): Promise<ProjectSnapshot | null> => {
+    const appSettings = await readAppSettings();
+    const rawRoot = appSettings.lastOpenedProjectPath;
+    if (!rawRoot) return null;
+    if (!existsSync(rawRoot)) return null;
+
+    const rootPath = canonicalProjectRoot(rawRoot);
+    if (appSettings.autoCreateProjectStructure) {
+      await ensureProject(rootPath);
+    }
+    currentProjectRoot = rootPath;
+    return await readProjectSnapshot(rootPath);
   });
 
   ipcMain.handle("project:open", async (): Promise<ProjectSnapshot | null> => {
@@ -194,6 +220,7 @@ function registerIpcHandlers(): void {
       await ensureProject(rootPath);
     }
     currentProjectRoot = rootPath;
+    await persistLastOpenedProjectPath(rootPath);
     return readProjectSnapshot(rootPath);
   });
 
@@ -204,6 +231,7 @@ function registerIpcHandlers(): void {
       await ensureProject(rootPath);
     }
     currentProjectRoot = rootPath;
+    await persistLastOpenedProjectPath(rootPath);
     return readProjectSnapshot(rootPath);
   });
 

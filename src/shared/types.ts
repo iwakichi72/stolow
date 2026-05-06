@@ -29,6 +29,8 @@ export interface StolowSettings {
 export interface StolowAppSettings {
   /** プロジェクトを開いたときに manuscript/context などを自動生成する */
   autoCreateProjectStructure: boolean;
+  /** 最後に開いていたプロジェクト（フォルダ） */
+  lastOpenedProjectPath?: string;
 }
 
 export interface ProjectFile {
@@ -134,6 +136,7 @@ export interface ProjectReplaceApplyResult {
 
 export interface StolowApi {
   openProject: () => Promise<ProjectSnapshot | null>;
+  openLastProject: () => Promise<ProjectSnapshot | null>;
   refreshProject: (projectPath: string) => Promise<ProjectSnapshot>;
   getCurrentProjectSnapshot: () => Promise<ProjectSnapshot | null>;
   openSettingsWindow: () => Promise<void>;

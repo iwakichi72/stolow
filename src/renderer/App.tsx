@@ -178,7 +178,9 @@ export function App(): JSX.Element {
         setIsLoadingFile(false);
       }
     },
-    [project]
+    // snapshot 引数を優先して使うので project への依存は不要。
+    // project を依存にすると callback が再生成され、起動時復元 effect がループしうる。
+    []
   );
 
   const refreshProject = useCallback(
@@ -240,6 +242,41 @@ export function App(): JSX.Element {
     } finally {
       setIsOpening(false);
     }
+  }, [loadFile]);
+
+  // 起動時に最後に開いていたプロジェクトを自動で開く
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!window.stolow) return;
+        const snapshot = await window.stolow.openLastProject();
+        if (cancelled || !snapshot) return;
+
+        setProject(snapshot);
+        setSettingsDraft(snapshot.settings);
+        setMode(snapshot.settings.defaultMode);
+        setStatusMessage(`${snapshot.name} を開きました。`);
+
+        const firstFile =
+          snapshot.files.find((file) => file.kind === "manuscript") ?? snapshot.files[0] ?? null;
+        if (firstFile) {
+          await loadFile(firstFile, snapshot);
+        } else {
+          setActiveFile(null);
+          setDocumentText("");
+          setLastSavedText("");
+          setSelection(EMPTY_SELECTION);
+          setStatusMessage("Markdown ファイルが見つかりません。");
+        }
+      } catch (e) {
+        // 最後のプロジェクトが無い/消えた等は黙って初期表示のままにする
+        console.error(e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [loadFile]);
 
   const saveFile = useCallback(async (): Promise<void> => {
