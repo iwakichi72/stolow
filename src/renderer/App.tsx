@@ -123,6 +123,7 @@ export function App(): JSX.Element {
   const [rightPanelTab, setRightPanelTab] = useState<"ai" | "search">("ai");
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const focusSearchRef = useRef<null | (() => void)>(null);
+  const projectRef = useRef<ProjectSnapshot | null>(null);
   const [previewPlan, setPreviewPlan] = useState<null | {
     title: string;
     kindLabel: string;
@@ -156,14 +157,19 @@ export function App(): JSX.Element {
     return groups;
   }, [project?.files]);
 
+  useEffect(() => {
+    projectRef.current = project;
+  }, [project]);
+
   const loadFile = useCallback(
-    async (file: ProjectFile, snapshot = project): Promise<void> => {
-      if (!snapshot) return;
+    async (file: ProjectFile, snapshot?: ProjectSnapshot | null): Promise<void> => {
+      const resolvedSnapshot = snapshot ?? projectRef.current;
+      if (!resolvedSnapshot) return;
       setIsLoadingFile(true);
       setPanelError(null);
 
       try {
-        const contents = await window.stolow.readFile(snapshot.rootPath, file.relativePath);
+        const contents = await window.stolow.readFile(resolvedSnapshot.rootPath, file.relativePath);
         setActiveFile(file);
         setDocumentText(contents);
         setLastSavedText(contents);
@@ -178,8 +184,6 @@ export function App(): JSX.Element {
         setIsLoadingFile(false);
       }
     },
-    // snapshot 引数を優先して使うので project への依存は不要。
-    // project を依存にすると callback が再生成され、起動時復元 effect がループしうる。
     []
   );
 
@@ -696,9 +700,6 @@ export function App(): JSX.Element {
           if (project) void refreshProject(project.rootPath, activeFile);
         }}
         onSave={saveFile}
-        onUiPing={() => {
-          // no-op
-        }}
         project={project}
         sidebarWidth={sidebarWidth}
       />
@@ -1016,7 +1017,6 @@ interface ProjectSidebarProps {
   onOpenProject: () => void;
   onRefresh: () => void;
   onSave: () => void;
-  onUiPing: (message: string) => void;
   project: ProjectSnapshot | null;
   sidebarWidth: number;
 }
@@ -1032,7 +1032,6 @@ function ProjectSidebar({
   onOpenProject,
   onRefresh,
   onSave,
-  onUiPing,
   project,
   sidebarWidth
 }: ProjectSidebarProps): JSX.Element {
@@ -1061,7 +1060,7 @@ function ProjectSidebar({
       <div
         className="toolbar"
         onMouseDownCapture={() => {
-          onUiPing("toolbar mousedown");
+          // no-op
         }}
       >
         <button
@@ -1104,7 +1103,6 @@ function ProjectSidebar({
           aria-label="manuscript に新規 Markdown"
           className="icon-button"
           onClick={() => {
-            onUiPing("new manuscript click");
             if (!project) {
               onOpenProject();
               return;
@@ -1120,7 +1118,6 @@ function ProjectSidebar({
           aria-label="context に新規 Markdown"
           className="icon-button"
           onClick={() => {
-            onUiPing("new context click");
             if (!project) {
               onOpenProject();
               return;
