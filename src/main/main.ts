@@ -437,7 +437,22 @@ function resolveProjectMarkdownPath(projectPath: string, relativePath: string): 
 function normalizeNewMarkdownRelativePath(raw: string): string {
   const trimmed = raw.trim().replace(/\\/g, "/");
   const withoutLeading = trimmed.replace(/^\/+/, "").replace(/^\.\/+/, "");
-  return withoutLeading.split("/").filter((segment) => segment !== "" && segment !== "." && segment !== "..").join("/");
+  const parts = withoutLeading
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== "." && segment !== "..");
+
+  // 最後のセグメント（ファイル名）のみ、クロスプラットフォームで壊れやすい文字をサニタイズする。
+  // - Windows 禁則（<>:"/\|?* + 制御文字）
+  // - 末尾のドット/空白（Windows で不正になりやすい）
+  // - 空文字化したらエラーにする（後段の assert で弾く）
+  if (parts.length > 0) {
+    const dir = parts.slice(0, -1);
+    const file = parts[parts.length - 1] ?? "";
+    const safeFile = sanitizeFilenameSegment(file);
+    return [...dir, safeFile].join("/");
+  }
+
+  return parts.join("/");
 }
 
 function assertCreatableMarkdownRelativePath(relativePath: string): void {
@@ -447,6 +462,36 @@ function assertCreatableMarkdownRelativePath(relativePath: string): void {
   if (!relativePath.startsWith("manuscript/") && !relativePath.startsWith("context/")) {
     throw new Error("作成できるのは manuscript/ または context/ 配下の Markdown のみです。");
   }
+
+  const base = relativePath.split("/").pop() ?? "";
+  if (!base || base === ".md") {
+    throw new Error("ファイル名が不正です。");
+  }
+  if (base.length > 200) {
+    throw new Error("ファイル名が長すぎます。");
+  }
+}
+
+function sanitizeFilenameSegment(name: string): string {
+  // NOTE: path セパレータは事前に `/` に揃えているが、念のため両方潰す。
+  const replaced = name
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.\s]+$/g, ""); // 末尾のドット/空白を除去
+
+  // macOS/Linux では利用できても、Windows では不正になりうる予約語を回避する。
+  const upper = replaced.toUpperCase();
+  const isReserved =
+    upper === "CON" ||
+    upper === "PRN" ||
+    upper === "AUX" ||
+    upper === "NUL" ||
+    /^COM[1-9]$/.test(upper) ||
+    /^LPT[1-9]$/.test(upper);
+
+  const safe = isReserved ? `${replaced}-file` : replaced;
+  return safe;
 }
 
 async function readOptionalProjectFile(projectPath: string, relativePath: string): Promise<string> {
