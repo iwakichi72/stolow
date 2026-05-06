@@ -454,14 +454,17 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     if (!project) return;
-    const next: Record<string, boolean> = {};
-    for (const file of project.files) {
-      if (file.kind !== "context") continue;
-      next[file.relativePath] =
-        file.relativePath === "context/summary.md" || file.relativePath === "context/notes.md";
-    }
-    setContextSelection(next);
-  }, [project?.rootPath]);
+    setContextSelection((current) => {
+      const next: Record<string, boolean> = {};
+      for (const file of project.files) {
+        if (file.kind !== "context") continue;
+        const fallback =
+          file.relativePath === "context/summary.md" || file.relativePath === "context/notes.md";
+        next[file.relativePath] = current[file.relativePath] ?? fallback;
+      }
+      return next;
+    });
+  }, [project?.files]);
 
   useEffect(() => {
     try {
