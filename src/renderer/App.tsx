@@ -10,6 +10,7 @@ import {
   Loader2,
   RefreshCcw,
   Save,
+  Settings,
   Sparkles,
   StickyNote,
   X
@@ -121,6 +122,7 @@ export function App(): JSX.Element {
     readStoredBoolean(LAYOUT_STORAGE_KEYS.aiPanelOpen, true)
   );
   const [rightPanelTab, setRightPanelTab] = useState<"ai" | "search">("ai");
+  const [appliedCardId, setAppliedCardId] = useState<string | null>(null);
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const focusSearchRef = useRef<null | (() => void)>(null);
   const projectRef = useRef<ProjectSnapshot | null>(null);
@@ -441,9 +443,16 @@ export function App(): JSX.Element {
       }
       editor.applyChange(plan.change);
       setStatusMessage("候補を本文に反映しました。必要なら上書き保存してください。");
+      setAppliedCardId(candidate.id);
     },
     [buildApplyPlan]
   );
+
+  useEffect(() => {
+    if (!appliedCardId) return;
+    const timer = window.setTimeout(() => setAppliedCardId(null), 700);
+    return () => window.clearTimeout(timer);
+  }, [appliedCardId]);
 
   useEffect(() => {
     if (!project) return;
@@ -699,6 +708,9 @@ export function App(): JSX.Element {
           void loadFile(file);
         }}
         onOpenProject={openProject}
+        onOpenSettings={() => {
+          void window.stolow?.openSettingsWindow();
+        }}
         onRefresh={() => {
           if (project) void refreshProject(project.rootPath, activeFile);
         }}
@@ -732,9 +744,24 @@ export function App(): JSX.Element {
                 {activeFile.relativePath}
               </span>
             ) : null}
-            {isDirty ? <strong className="dirty-badge">未保存</strong> : activeFile ? <span className="saved-badge">保存済み</span> : null}
+            {isSaving ? (
+              <span className="saving-badge" aria-live="polite">
+                <Loader2 aria-hidden className="spin" size={11} />
+                保存中
+              </span>
+            ) : isDirty ? (
+              <strong className="dirty-badge" aria-live="polite">
+                未保存
+              </strong>
+            ) : activeFile ? (
+              <span className="saved-badge">保存済み</span>
+            ) : null}
           </div>
           <div className="document-meta">
+            {`Mode: ${MODE_LABELS[mode]}`}
+            <span aria-hidden className="meta-sep" />
+            {`Model: ${PROFILE_LABELS[modelProfile]}`}
+            <span aria-hidden className="meta-sep" />
             {isLoadingFile ? "読み込み中…" : `${documentText.length.toLocaleString()} 文字`}
           </div>
         </div>
@@ -817,6 +844,7 @@ export function App(): JSX.Element {
             {rightPanelTab === "ai" ? (
               <SuggestionPanelBody
                 activeFile={activeFile}
+                appliedCardId={appliedCardId}
                 contextFiles={contextFiles}
                 contextSelection={contextSelection}
                 chapterHeadingLevel={chapterHeadingLevel}
@@ -1018,6 +1046,7 @@ interface ProjectSidebarProps {
   onCreateMarkdown: (folder: "manuscript" | "context") => void;
   onFileSelect: (file: ProjectFile) => void;
   onOpenProject: () => void;
+  onOpenSettings: () => void;
   onRefresh: () => void;
   onSave: () => void;
   project: ProjectSnapshot | null;
@@ -1033,6 +1062,7 @@ function ProjectSidebar({
   onCreateMarkdown,
   onFileSelect,
   onOpenProject,
+  onOpenSettings,
   onRefresh,
   onSave,
   project,
@@ -1054,57 +1084,70 @@ function ProjectSidebar({
       aria-label="Project files"
       style={{ width: sidebarWidth, maxWidth: "100%" }}
     >
-      {project ? (
-        <div className="sidebar-project-line">
-          <p title={project.rootPath}>{project.name}</p>
-        </div>
-      ) : null}
-
-      <div
-        className="toolbar"
-        onMouseDownCapture={() => {
-          // no-op
-        }}
-      >
+      <div className="sidebar-brand">
         <button
+          aria-label={project ? "別のプロジェクトを開く" : "プロジェクトを開く"}
           aria-busy={isOpening}
-          className="primary-action"
+          className="project-header"
           disabled={isOpening}
           onClick={onOpenProject}
+          title={project ? `${project.name} — ${project.rootPath}\nクリックで別プロジェクトを開く` : "プロジェクトを開く"}
           type="button"
         >
-          {isOpening ? <Loader2 aria-hidden className="spin" size={16} /> : <FolderOpen aria-hidden size={16} />}
-          Open
+          {isOpening ? (
+            <Loader2 aria-hidden className="spin" size={14} />
+          ) : (
+            <FolderOpen aria-hidden size={14} />
+          )}
+          <span className="project-header-name">
+            {project ? project.name : "プロジェクトを開く"}
+          </span>
         </button>
+        <div className="sidebar-brand-actions">
+          <button
+            aria-label="設定を開く"
+            className="brand-icon-button"
+            onClick={onOpenSettings}
+            title="設定"
+            type="button"
+          >
+            <Settings aria-hidden size={15} />
+          </button>
+        </div>
+      </div>
+
+      <div className="toolbar">
         <button
-          aria-label="Save"
+          aria-label="保存"
           className="icon-button"
           disabled={!activeFile || isSaving}
           onClick={onSave}
-          title="Save"
+          title="保存"
           type="button"
         >
           {isSaving ? (
-            <Loader2 aria-hidden className="spin" size={16} />
+            <Loader2 aria-hidden className="spin" size={15} />
           ) : isDirty ? (
-            <Save aria-hidden size={16} />
+            <Save aria-hidden size={15} />
           ) : (
-            <Check aria-hidden size={16} />
+            <Check aria-hidden size={15} />
           )}
         </button>
         <button
-          aria-label="Refresh file list"
+          aria-label="ファイル一覧を更新"
           className="icon-button"
           disabled={!project}
           onClick={onRefresh}
-          title="Refresh files"
+          title="ファイル一覧を更新"
           type="button"
         >
-          <RefreshCcw aria-hidden size={16} />
+          <RefreshCcw aria-hidden size={15} />
         </button>
+        <span className="toolbar-spacer" aria-hidden />
         <button
           aria-label="manuscript に新規 Markdown"
           className="icon-button"
+          disabled={!project}
           onClick={() => {
             if (!project) {
               onOpenProject();
@@ -1115,11 +1158,12 @@ function ProjectSidebar({
           title={project ? "原稿（manuscript）に新規 .md" : "先にプロジェクトを開いてください"}
           type="button"
         >
-          <FilePlus aria-hidden size={16} />
+          <FilePlus aria-hidden size={15} />
         </button>
         <button
           aria-label="context に新規 Markdown"
           className="icon-button"
+          disabled={!project}
           onClick={() => {
             if (!project) {
               onOpenProject();
@@ -1130,7 +1174,7 @@ function ProjectSidebar({
           title={project ? "Context に新規 .md" : "先にプロジェクトを開いてください"}
           type="button"
         >
-          <StickyNote aria-hidden size={16} />
+          <StickyNote aria-hidden size={15} />
         </button>
       </div>
 
@@ -1139,6 +1183,7 @@ function ProjectSidebar({
           activePath={activeFile?.relativePath}
           expanded={expandedGroups.manuscript}
           files={groupedFiles.manuscript}
+          kind="manuscript"
           label="Manuscript"
           onFileSelect={onFileSelect}
           onToggle={() => toggleGroup("manuscript")}
@@ -1147,6 +1192,7 @@ function ProjectSidebar({
           activePath={activeFile?.relativePath}
           expanded={expandedGroups.context}
           files={groupedFiles.context}
+          kind="context"
           label="Context"
           onFileSelect={onFileSelect}
           onToggle={() => toggleGroup("context")}
@@ -1156,6 +1202,7 @@ function ProjectSidebar({
             activePath={activeFile?.relativePath}
             expanded={expandedGroups.other}
             files={groupedFiles.other}
+            kind="other"
             label="Other"
             onFileSelect={onFileSelect}
             onToggle={() => toggleGroup("other")}
@@ -1170,6 +1217,7 @@ interface FileGroupProps {
   activePath?: string;
   expanded: boolean;
   files: ProjectFile[];
+  kind: ProjectFileKind;
   label: string;
   onFileSelect: (file: ProjectFile) => void;
   onToggle: () => void;
@@ -1179,12 +1227,13 @@ function FileGroup({
   activePath,
   expanded,
   files,
+  kind,
   label,
   onFileSelect,
   onToggle
 }: FileGroupProps): JSX.Element {
   return (
-    <div className={`file-group${expanded ? "" : " is-collapsed"}`}>
+    <div className={`file-group${expanded ? "" : " is-collapsed"}`} data-kind={kind}>
       <button
         aria-controls={`file-group-${label}`}
         aria-expanded={expanded}
@@ -1215,6 +1264,7 @@ function FileGroup({
 
 interface SuggestionPanelBodyProps {
   activeFile: ProjectFile | null;
+  appliedCardId: string | null;
   contextFiles: ProjectFile[];
   contextSelection: Record<string, boolean>;
   chapterHeadingLevel: 0 | 1 | 2;
@@ -1238,6 +1288,7 @@ interface SuggestionPanelBodyProps {
 
 function SuggestionPanelBody({
   activeFile,
+  appliedCardId,
   contextFiles,
   contextSelection,
   chapterHeadingLevel,
@@ -1340,17 +1391,6 @@ function SuggestionPanelBody({
       </fieldset>
 
       <button
-        className="chip"
-        disabled={controlsLocked}
-        onClick={() => {
-          void window.stolow?.openSettingsWindow();
-        }}
-        type="button"
-      >
-        接続/モデル/アプリ設定…
-      </button>
-
-      <button
         className="generate-button"
         disabled={!activeFile || !settings || isGenerating}
         onClick={onGenerate}
@@ -1389,26 +1429,40 @@ function SuggestionPanelBody({
       ) : null}
 
       <div className={`suggestion-list${isGenerating ? " is-generating" : ""}`}>
-        {result?.suggestions.map((candidate) => (
-          <article className="suggestion-card" key={candidate.id}>
+        {result?.suggestions.map((candidate, idx) => (
+          <article
+            className={`suggestion-card${appliedCardId === candidate.id ? " is-applied" : ""}`}
+            key={candidate.id}
+          >
             <div className="suggestion-title">
-              <span>{candidate.title}</span>
-              <div className="suggestion-actions">
-                <button disabled={isGenerating} onClick={() => onPreview(candidate)} type="button">
-                  プレビュー
-                </button>
-                <button disabled={isGenerating} onClick={() => onApply(candidate)} type="button">
-                  本文に反映
-                </button>
-              </div>
+              <span aria-hidden className="suggestion-label-dot" />
+              <span>{candidate.title || `候補 ${idx + 1}`}</span>
             </div>
             <p className="suggestion-body">{candidate.text}</p>
+            <div className="suggestion-footer">
+              <button
+                className="card-action"
+                disabled={isGenerating}
+                onClick={() => onPreview(candidate)}
+                type="button"
+              >
+                プレビュー
+              </button>
+              <button
+                className="card-action is-primary"
+                disabled={isGenerating}
+                onClick={() => onApply(candidate)}
+                type="button"
+              >
+                本文に反映
+              </button>
+            </div>
           </article>
         ))}
         {!result && !isGenerating ? (
           <div className="empty-suggestions">
-            <Sparkles aria-hidden size={18} />
-            <span>候補はここに表示されます。反映したい候補だけ「本文に反映」を押してください。</span>
+            <Sparkles aria-hidden size={16} />
+            <span>候補はここに表示されます。気に入ったものだけ「本文に反映」してください。</span>
           </div>
         ) : null}
       </div>
