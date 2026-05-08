@@ -281,6 +281,51 @@ function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    "file:delete",
+    async (_event, projectPath: string, relativePath: string): Promise<void> => {
+      try {
+        const rootPath = canonicalProjectRoot(projectPath);
+        const normalized = normalizeNewMarkdownRelativePath(relativePath);
+        const filePath = resolveProjectMarkdownPath(rootPath, normalized);
+        await fs.unlink(filePath);
+      } catch (error) {
+        console.error("Failed to delete file", error);
+        throw new Error("ファイル削除に失敗しました。");
+      }
+    }
+  );
+
+  ipcMain.handle(
+    "file:duplicate",
+    async (_event, projectPath: string, relativePath: string): Promise<ProjectFile> => {
+      try {
+        const rootPath = canonicalProjectRoot(projectPath);
+        const normalized = normalizeNewMarkdownRelativePath(relativePath);
+        const sourcePath = resolveProjectMarkdownPath(rootPath, normalized);
+
+        const sourceRel = toPosix(path.relative(rootPath, sourcePath));
+        const dir = path.posix.dirname(sourceRel);
+        const baseName = path.posix.basename(sourceRel, ".md");
+
+        const nextRel = await pickDuplicateRelativePath(rootPath, dir, baseName);
+        const destPath = resolveProjectMarkdownPath(rootPath, nextRel);
+
+        await fs.mkdir(path.dirname(destPath), { recursive: true });
+        await fs.copyFile(sourcePath, destPath);
+
+        return {
+          relativePath: toPosix(path.relative(rootPath, destPath)),
+          name: path.basename(destPath),
+          kind: fileKind(toPosix(path.relative(rootPath, destPath)))
+        };
+      } catch (error) {
+        console.error("Failed to duplicate file", error);
+        throw new Error("ファイル複製に失敗しました。");
+      }
+    }
+  );
+
+  ipcMain.handle(
     "settings:update",
     async (_event, projectPath: string, settings: StolowSettings): Promise<StolowSettings> => {
       const normalized = normalizeSettings(settings);
@@ -683,6 +728,25 @@ async function pathExists(filePath: string): Promise<boolean> {
 
 function toPosix(relativePath: string): string {
   return relativePath.split(path.sep).join("/");
+}
+
+async function pickDuplicateRelativePath(projectRoot: string, dir: string, baseName: string): Promise<string> {
+  const safeDir = dir === "." ? "" : dir.replace(/^\/+/, "").replace(/\/+$/, "");
+  const prefix = safeDir ? `${safeDir}/` : "";
+
+  const baseCandidate = `${prefix}${baseName} - コピー.md`;
+  if (!(await pathExists(resolveProjectMarkdownPath(projectRoot, baseCandidate)))) {
+    return baseCandidate;
+  }
+
+  for (let i = 2; i <= 200; i++) {
+    const candidate = `${prefix}${baseName} - コピー ${i}.md`;
+    if (!(await pathExists(resolveProjectMarkdownPath(projectRoot, candidate)))) {
+      return candidate;
+    }
+  }
+
+  throw new Error("複製ファイル名を決められませんでした。");
 }
 
 function toUserFacingAiMessage(error: unknown): string {

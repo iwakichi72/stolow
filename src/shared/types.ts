@@ -153,6 +153,8 @@ export interface StolowApi {
   readFile: (projectPath: string, relativePath: string) => Promise<string>;
   saveFile: (projectPath: string, relativePath: string, contents: string) => Promise<SaveFileResult>;
   createMarkdownFile: (projectPath: string, relativePath: string) => Promise<ProjectFile>;
+  deleteMarkdownFile: (projectPath: string, relativePath: string) => Promise<void>;
+  duplicateMarkdownFile: (projectPath: string, relativePath: string) => Promise<ProjectFile>;
   getAppSettings: () => Promise<StolowAppSettings>;
   updateAppSettings: (settings: StolowAppSettings) => Promise<StolowAppSettings>;
   updateSettings: (projectPath: string, settings: StolowSettings) => Promise<StolowSettings>;

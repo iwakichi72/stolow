@@ -21,6 +21,10 @@ const api: StolowApi = {
     ipcRenderer.invoke("file:save", projectPath, relativePath, contents),
   createMarkdownFile: (projectPath: string, relativePath: string) =>
     ipcRenderer.invoke("file:create", projectPath, relativePath),
+  deleteMarkdownFile: (projectPath: string, relativePath: string) =>
+    ipcRenderer.invoke("file:delete", projectPath, relativePath),
+  duplicateMarkdownFile: (projectPath: string, relativePath: string) =>
+    ipcRenderer.invoke("file:duplicate", projectPath, relativePath),
   getAppSettings: () => ipcRenderer.invoke("appSettings:get"),
   updateAppSettings: (settings: StolowAppSettings) => ipcRenderer.invoke("appSettings:update", settings),
   updateSettings: (projectPath: string, settings: StolowSettings) =>
