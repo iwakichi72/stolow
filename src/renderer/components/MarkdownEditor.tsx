@@ -6,6 +6,7 @@ import type { EditorSelectionSnapshot } from "../../shared/types";
 
 export interface MarkdownEditorHandle {
   applyChange: (spec: { from: number; to: number; insert: string; selection: EditorSelectionSnapshot }) => void;
+  scrollTo: (pos: number) => void;
 }
 
 interface MarkdownEditorProps {
@@ -44,6 +45,18 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
           selection: EditorSelection.range(anchor, head),
           scrollIntoView: true,
           userEvent: "stolow.ai.apply"
+        });
+        view.focus();
+      },
+      scrollTo: (pos: number): void => {
+        const view = viewRef.current;
+        if (!view) return;
+        const docLen = view.state.doc.length;
+        const safe = Math.max(0, Math.min(pos, docLen));
+        view.dispatch({
+          selection: EditorSelection.cursor(safe),
+          scrollIntoView: true,
+          userEvent: "stolow.outline.jump"
         });
         view.focus();
       }

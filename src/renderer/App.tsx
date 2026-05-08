@@ -10,6 +10,7 @@ import {
   Loader2,
   RefreshCcw,
   Save,
+  Search,
   Settings,
   Sparkles,
   StickyNote,
@@ -29,7 +30,14 @@ import type {
   SuggestionMode
 } from "../shared/types";
 import { MODEL_PROFILES, SUGGESTION_MODES } from "../shared/types";
+import { ContextViewPanel } from "./components/ContextViewPanel";
 import { MarkdownEditor, type MarkdownEditorHandle } from "./components/MarkdownEditor";
+import { OutlinePanel } from "./components/OutlinePanel";
+import { ProjectSidebar, type SidebarTab } from "./components/ProjectSidebar";
+import { SearchPanel } from "./components/SearchPanel";
+import { StatsPanel } from "./components/StatsPanel";
+
+type RightPanelTab = "ai" | "outline" | "context" | "stats";
 
 const MODE_LABELS: Record<SuggestionMode, string> = {
   natural: "Natural",
@@ -121,8 +129,9 @@ export function App(): JSX.Element {
   const [aiPanelOpen, setAiPanelOpen] = useState(() =>
     readStoredBoolean(LAYOUT_STORAGE_KEYS.aiPanelOpen, true)
   );
-  const [rightPanelTab, setRightPanelTab] = useState<"ai" | "search">("ai");
+  const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>("ai");
   const [appliedCardId, setAppliedCardId] = useState<string | null>(null);
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const focusSearchRef = useRef<null | (() => void)>(null);
   const projectRef = useRef<ProjectSnapshot | null>(null);
@@ -134,6 +143,11 @@ export function App(): JSX.Element {
     change: { from: number; to: number; insert: string; selection: EditorSelectionSnapshot };
   }>(null);
 
+  const handleOutlineJump = useCallback((pos: number) => {
+    setSelection({ from: pos, to: pos, head: pos, selectedText: "" });
+    window.setTimeout(() => editorRef.current?.scrollTo(pos), 0);
+  }, []);
+
   const isDirty = activeFile !== null && documentText !== lastSavedText;
   const selectedChars = selection.to > selection.from ? selection.to - selection.from : 0;
   const contextFiles = useMemo(
@@ -144,6 +158,24 @@ export function App(): JSX.Element {
     () => Object.keys(contextSelection).filter((path) => contextSelection[path]),
     [contextSelection]
   );
+
+  const rightPanelHeading = useMemo(() => {
+    switch (rightPanelTab) {
+      case "ai":
+        return {
+          title: "AI サジェスト",
+          subtitle: selectedChars > 0 ? "選択範囲リライト" : "次の1段落"
+        };
+      case "outline":
+        return { title: "構成", subtitle: "見出しへジャンプ" };
+      case "context":
+        return { title: "参照", subtitle: "context を開かずに確認" };
+      case "stats":
+        return { title: "統計", subtitle: "文字数・進捗" };
+      default:
+        return { title: "", subtitle: "" };
+    }
+  }, [project, rightPanelTab, selectedChars]);
 
   const groupedFiles = useMemo(() => {
     const groups: Record<ProjectFile["kind"], ProjectFile[]> = {
@@ -633,8 +665,7 @@ export function App(): JSX.Element {
       // Mod+F: open search tab and focus query
       if (event.key.toLowerCase() === "f") {
         event.preventDefault();
-        if (!aiPanelOpen) setAiPanelOpen(true);
-        setRightPanelTab("search");
+        setSidebarTab("search");
         window.setTimeout(() => focusSearchRef.current?.(), 0);
         return;
       }
@@ -685,7 +716,6 @@ export function App(): JSX.Element {
     applySuggestion,
     buildApplyPlan,
     generate,
-    isDirty,
     previewPlan,
     suggestionResult?.suggestions
   ]);
@@ -708,6 +738,10 @@ export function App(): JSX.Element {
           void loadFile(file);
         }}
         onOpenProject={openProject}
+        onOpenSearch={() => {
+          setSidebarTab((current) => (current === "search" ? "files" : "search"));
+          window.setTimeout(() => focusSearchRef.current?.(), 0);
+        }}
         onOpenSettings={() => {
           void window.stolow?.openSettingsWindow();
         }}
@@ -716,6 +750,38 @@ export function App(): JSX.Element {
         }}
         onSave={saveFile}
         project={project}
+        searchPanel={
+          <SearchPanel
+            error={panelError}
+            project={project}
+            registerFocus={(fn) => {
+              focusSearchRef.current = fn;
+            }}
+            onJump={async (relativePath, from, to) => {
+              if (!project) return;
+              const file = project.files.find((f) => f.relativePath === relativePath);
+              if (!file) return;
+              await loadFile(file);
+              const head = to;
+              setSelection({
+                from,
+                to,
+                head,
+                selectedText: ""
+              });
+            }}
+            onRefreshAfterReplace={async () => {
+              if (!project) return;
+              await refreshProject(project.rootPath, activeFile);
+              if (activeFile) {
+                await loadFile(activeFile);
+              }
+            }}
+            setPanelError={setPanelError}
+            setStatusMessage={setStatusMessage}
+          />
+        }
+        sidebarTab={sidebarTab}
         sidebarWidth={sidebarWidth}
       />
 
@@ -797,19 +863,11 @@ export function App(): JSX.Element {
           >
             <div className="panel-heading">
               <div>
-                <h2>{rightPanelTab === "ai" ? "AI サジェスト" : "検索"}</h2>
-                <p>
-                  {rightPanelTab === "ai"
-                    ? selectedChars > 0
-                      ? "選択範囲リライト"
-                      : "次の1段落"
-                    : project
-                      ? "プロジェクト内の Markdown を検索"
-                      : "プロジェクト未選択"}
-                </p>
+                <h2>{rightPanelHeading.title}</h2>
+                <p>{rightPanelHeading.subtitle}</p>
               </div>
               <div className="panel-heading-actions">
-                <div className="panel-tabs" role="tablist" aria-label="Right panel tabs">
+                <div className="panel-tabs panel-tabs-multi" role="tablist" aria-label="Right panel tabs">
                   <button
                     aria-selected={rightPanelTab === "ai"}
                     className={rightPanelTab === "ai" ? "active" : ""}
@@ -820,13 +878,34 @@ export function App(): JSX.Element {
                     AI
                   </button>
                   <button
-                    aria-selected={rightPanelTab === "search"}
-                    className={rightPanelTab === "search" ? "active" : ""}
-                    onClick={() => setRightPanelTab("search")}
+                    aria-selected={rightPanelTab === "outline"}
+                    className={rightPanelTab === "outline" ? "active" : ""}
+                    onClick={() => setRightPanelTab("outline")}
                     role="tab"
+                    title="構成（見出し）"
                     type="button"
                   >
-                    検索
+                    構成
+                  </button>
+                  <button
+                    aria-selected={rightPanelTab === "context"}
+                    className={rightPanelTab === "context" ? "active" : ""}
+                    onClick={() => setRightPanelTab("context")}
+                    role="tab"
+                    title="参照（context）"
+                    type="button"
+                  >
+                    参照
+                  </button>
+                  <button
+                    aria-selected={rightPanelTab === "stats"}
+                    className={rightPanelTab === "stats" ? "active" : ""}
+                    onClick={() => setRightPanelTab("stats")}
+                    role="tab"
+                    title="統計"
+                    type="button"
+                  >
+                    統計
                   </button>
                 </div>
                 <button
@@ -879,35 +958,25 @@ export function App(): JSX.Element {
                 selectedChars={selectedChars}
                 settings={settingsDraft}
               />
-            ) : (
-              <SearchPanel
-                error={panelError}
+            ) : rightPanelTab === "outline" ? (
+              <OutlinePanel
+                cursorPos={selection.head}
+                documentText={documentText}
+                onJump={handleOutlineJump}
+              />
+            ) : rightPanelTab === "context" ? (
+              <ContextViewPanel
+                contextFiles={contextFiles}
+                contextSelection={contextSelection}
                 project={project}
-                registerFocus={(fn) => {
-                  focusSearchRef.current = fn;
-                }}
-                onJump={async (relativePath, from, to) => {
-                  if (!project) return;
-                  const file = project.files.find((f) => f.relativePath === relativePath);
-                  if (!file) return;
-                  await loadFile(file);
-                  const head = to;
-                  setSelection({
-                    from,
-                    to,
-                    head,
-                    selectedText: ""
-                  });
-                }}
-                onRefreshAfterReplace={async () => {
-                  if (!project) return;
-                  await refreshProject(project.rootPath, activeFile);
-                  if (activeFile) {
-                    await loadFile(activeFile);
-                  }
-                }}
-                setPanelError={setPanelError}
-                setStatusMessage={setStatusMessage}
+              />
+            ) : (
+              <StatsPanel
+                activeFile={activeFile}
+                documentText={documentText}
+                onTargetCharsChange={(value) => updateSettingsField("targetChars", value)}
+                project={project}
+                settings={settingsDraft}
               />
             )}
           </aside>
@@ -1037,7 +1106,7 @@ export function App(): JSX.Element {
   );
 }
 
-interface ProjectSidebarProps {
+interface ProjectSidebarProps_UNUSED {
   activeFile: ProjectFile | null;
   groupedFiles: Record<ProjectFile["kind"], ProjectFile[]>;
   isDirty: boolean;
@@ -1046,14 +1115,17 @@ interface ProjectSidebarProps {
   onCreateMarkdown: (folder: "manuscript" | "context") => void;
   onFileSelect: (file: ProjectFile) => void;
   onOpenProject: () => void;
+  onOpenSearch: () => void;
   onOpenSettings: () => void;
   onRefresh: () => void;
   onSave: () => void;
   project: ProjectSnapshot | null;
+  searchPanel: JSX.Element;
+  sidebarTab: SidebarTab;
   sidebarWidth: number;
 }
 
-function ProjectSidebar({
+function ProjectSidebar_UNUSED({
   activeFile,
   groupedFiles,
   isDirty,
@@ -1062,12 +1134,15 @@ function ProjectSidebar({
   onCreateMarkdown,
   onFileSelect,
   onOpenProject,
+  onOpenSearch,
   onOpenSettings,
   onRefresh,
   onSave,
   project,
+  searchPanel,
+  sidebarTab,
   sidebarWidth
-}: ProjectSidebarProps): JSX.Element {
+}: ProjectSidebarProps_UNUSED): JSX.Element {
   const [expandedGroups, setExpandedGroups] = useState<Record<ProjectFileKind, boolean>>({
     manuscript: true,
     context: true,
@@ -1143,6 +1218,16 @@ function ProjectSidebar({
         >
           <RefreshCcw aria-hidden size={15} />
         </button>
+        <button
+          aria-label="検索"
+          className="icon-button"
+          disabled={!project}
+          onClick={onOpenSearch}
+          title={project ? "検索" : "先にプロジェクトを開いてください"}
+          type="button"
+        >
+          <Search aria-hidden size={15} className={sidebarTab === "search" ? "is-active" : ""} />
+        </button>
         <span className="toolbar-spacer" aria-hidden />
         <button
           aria-label="manuscript に新規 Markdown"
@@ -1178,37 +1263,43 @@ function ProjectSidebar({
         </button>
       </div>
 
-      <div className="sidebar-files">
-        <FileGroup
-          activePath={activeFile?.relativePath}
-          expanded={expandedGroups.manuscript}
-          files={groupedFiles.manuscript}
-          kind="manuscript"
-          label="Manuscript"
-          onFileSelect={onFileSelect}
-          onToggle={() => toggleGroup("manuscript")}
-        />
-        <FileGroup
-          activePath={activeFile?.relativePath}
-          expanded={expandedGroups.context}
-          files={groupedFiles.context}
-          kind="context"
-          label="Context"
-          onFileSelect={onFileSelect}
-          onToggle={() => toggleGroup("context")}
-        />
-        {groupedFiles.other.length > 0 ? (
+      {sidebarTab === "search" ? (
+        <div className="sidebar-search" aria-label="検索">
+          {searchPanel}
+        </div>
+      ) : (
+        <div className="sidebar-files">
           <FileGroup
             activePath={activeFile?.relativePath}
-            expanded={expandedGroups.other}
-            files={groupedFiles.other}
-            kind="other"
-            label="Other"
+            expanded={expandedGroups.manuscript}
+            files={groupedFiles.manuscript}
+            kind="manuscript"
+            label="Manuscript"
             onFileSelect={onFileSelect}
-            onToggle={() => toggleGroup("other")}
+            onToggle={() => toggleGroup("manuscript")}
           />
-        ) : null}
-      </div>
+          <FileGroup
+            activePath={activeFile?.relativePath}
+            expanded={expandedGroups.context}
+            files={groupedFiles.context}
+            kind="context"
+            label="Context"
+            onFileSelect={onFileSelect}
+            onToggle={() => toggleGroup("context")}
+          />
+          {groupedFiles.other.length > 0 ? (
+            <FileGroup
+              activePath={activeFile?.relativePath}
+              expanded={expandedGroups.other}
+              files={groupedFiles.other}
+              kind="other"
+              label="Other"
+              onFileSelect={onFileSelect}
+              onToggle={() => toggleGroup("other")}
+            />
+          ) : null}
+        </div>
+      )}
     </aside>
   );
 }
@@ -1470,7 +1561,7 @@ function SuggestionPanelBody({
   );
 }
 
-function SearchPanel({
+function SearchPanel_UNUSED({
   error,
   registerFocus,
   onJump,
