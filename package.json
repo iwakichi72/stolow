@@ -8,6 +8,9 @@
   "scripts": {
     "dev": "npm run build && electron .",
     "build": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.main.json && tsc -p tsconfig.preload.json && node scripts/cjs-preload.mjs && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "qa": "npm run build && npm run test",
     "start": "electron .",
     "icon:mac": "bash scripts/generate-mac-icon.sh",
     "dist:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac"
@@ -24,11 +27,16 @@
     "@types/node": "^22.10.1",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
+    "jsdom": "^26.0.0",
     "typescript": "^5.7.2",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "vitest": "^3.2.4"
   },
   "build": {
     "appId": "com.stolow.app",
