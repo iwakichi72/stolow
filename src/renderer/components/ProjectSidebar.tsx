@@ -131,75 +131,79 @@ export function ProjectSidebar({
       </div>
 
       <div className="toolbar">
-        <button
-          aria-label="保存"
-          className="icon-button"
-          disabled={!activeFile || isSaving}
-          onClick={onSave}
-          title="保存"
-          type="button"
-        >
-          {isSaving ? (
-            <Loader2 aria-hidden className="spin" size={15} />
-          ) : isDirty ? (
-            <Save aria-hidden size={15} />
-          ) : (
-            <Check aria-hidden size={15} />
-          )}
-        </button>
-        <button
-          aria-label="ファイル一覧を更新"
-          className="icon-button"
-          disabled={!project}
-          onClick={onRefresh}
-          title="ファイル一覧を更新"
-          type="button"
-        >
-          <RefreshCcw aria-hidden size={15} />
-        </button>
-        <button
-          aria-label="検索"
-          className={`icon-button${sidebarTab === "search" ? " is-active" : ""}`}
-          disabled={!project}
-          onClick={onOpenSearch}
-          title={project ? "検索" : "先にプロジェクトを開いてください"}
-          type="button"
-        >
-          <Search aria-hidden size={15} />
-        </button>
-        <span className="toolbar-spacer" aria-hidden />
-        <button
-          aria-label="manuscript に新規 Markdown"
-          className="icon-button"
-          disabled={!project}
-          onClick={() => {
-            if (!project) {
-              onOpenProject();
-              return;
-            }
-            onCreateMarkdown("manuscript");
-          }}
-          title={project ? "原稿（manuscript）に新規 .md" : "先にプロジェクトを開いてください"}
-          type="button"
-        >
-          <FilePlus aria-hidden size={15} />
-        </button>
-        <button
-          aria-label="context に新規 Markdown"
-          className="icon-button"
-          disabled={!project}
-          onClick={() => {
-            if (!project) {
-              onOpenProject();
-              return;
-            }
-            onCreateMarkdown("context");
-          }}
-          title={project ? "Context に新規 .md" : "先にプロジェクトを開いてください"}
-          type="button"
-        >
-          <StickyNote aria-hidden size={15} />
-        </button>
+        <div className="toolbar-group" aria-label="プロジェクト操作">
+          <button
+            aria-label="保存"
+            className="icon-button"
+            disabled={!activeFile || isSaving}
+            onClick={onSave}
+            title="保存"
+            type="button"
+          >
+            {isSaving ? (
+              <Loader2 aria-hidden className="spin" size={15} />
+            ) : isDirty ? (
+              <Save aria-hidden size={15} />
+            ) : (
+              <Check aria-hidden size={15} />
+            )}
+          </button>
+          <button
+            aria-label="ファイル一覧を更新"
+            className="icon-button"
+            disabled={!project}
+            onClick={onRefresh}
+            title="ファイル一覧を更新"
+            type="button"
+          >
+            <RefreshCcw aria-hidden size={15} />
+          </button>
+          <button
+            aria-label="検索"
+            className={`icon-button${sidebarTab === "search" ? " is-active" : ""}`}
+            disabled={!project}
+            onClick={onOpenSearch}
+            title={project ? "検索" : "先にプロジェクトを開いてください"}
+            type="button"
+          >
+            <Search aria-hidden size={15} />
+          </button>
+        </div>
+        <span className="toolbar-divider" aria-hidden />
+        <div className="toolbar-group" aria-label="新規作成">
+          <button
+            aria-label="manuscript に新規 Markdown"
+            className="icon-button"
+            disabled={!project}
+            onClick={() => {
+              if (!project) {
+                onOpenProject();
+                return;
+              }
+              onCreateMarkdown("manuscript");
+            }}
+            title={project ? "原稿（manuscript）に新規 .md" : "先にプロジェクトを開いてください"}
+            type="button"
+          >
+            <FilePlus aria-hidden size={15} />
+          </button>
+          <button
+            aria-label="context に新規 Markdown"
+            className="icon-button"
+            disabled={!project}
+            onClick={() => {
+              if (!project) {
+                onOpenProject();
+                return;
+              }
+              onCreateMarkdown("context");
+            }}
+            title={project ? "Context に新規 .md" : "先にプロジェクトを開いてください"}
+            type="button"
+          >
+            <StickyNote aria-hidden size={15} />
+          </button>
+        </div>
       </div>
 
       {sidebarTab === "search" ? (
