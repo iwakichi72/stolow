@@ -517,6 +517,53 @@ button:disabled {
   color: var(--indigo);
 }
 
+/* ---------- Sidebar context menu ---------- */
+.sidebar-context-menu {
+  position: fixed;
+  z-index: 80;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: rgba(23, 26, 35, 0.92);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 18px 42px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+}
+
+.sidebar-context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.sidebar-context-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--button-line);
+}
+
+.sidebar-context-menu-item.is-danger {
+  color: #f3b8b6;
+}
+
+.sidebar-context-menu-item.is-danger:hover {
+  background: rgba(239, 111, 108, 0.12);
+  border-color: var(--danger-line);
+}
+
 .empty-list {
   padding: 6px 8px;
   color: var(--quiet);

@@ -729,6 +729,48 @@ export function App(): JSX.Element {
         isOpening={isOpening}
         isSaving={isSaving}
         onCreateMarkdown={createNewMarkdown}
+        onDeleteFile={(file) => {
+          if (!project) return;
+          const deletingActive = activeFile?.relativePath === file.relativePath;
+          const hasUnsaved = deletingActive && isDirty;
+          const message = hasUnsaved
+            ? `未保存の変更があります。\n\n${file.relativePath}\nを削除しますか？`
+            : `${file.relativePath}\nを削除しますか？`;
+
+          if (!window.confirm(message)) return;
+
+          void (async () => {
+            try {
+              await window.stolow.deleteMarkdownFile(project.rootPath, file.relativePath);
+              if (deletingActive) {
+                setActiveFile(null);
+                setDocumentText("");
+                setLastSavedText("");
+                setSelection(EMPTY_SELECTION);
+              }
+              await refreshProject(project.rootPath, null);
+              setStatusMessage(`${file.relativePath} を削除しました。`);
+              setPanelError(null);
+            } catch (error) {
+              console.error(error);
+              setPanelError(error instanceof Error ? error.message : "ファイル削除に失敗しました。");
+            }
+          })();
+        }}
+        onDuplicateFile={(file) => {
+          if (!project) return;
+          void (async () => {
+            try {
+              const duplicated = await window.stolow.duplicateMarkdownFile(project.rootPath, file.relativePath);
+              await refreshProject(project.rootPath, duplicated);
+              setStatusMessage(`${file.relativePath} を複製しました。`);
+              setPanelError(null);
+            } catch (error) {
+              console.error(error);
+              setPanelError(error instanceof Error ? error.message : "ファイル複製に失敗しました。");
+            }
+          })();
+        }}
         onFileSelect={(file) => {
           if (isDirty) {
             setStatusMessage("未保存の変更があります。必要なら保存してから別ファイルを開いてください。");
