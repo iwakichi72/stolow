@@ -8,6 +8,10 @@ import {
   FileText,
   FolderOpen,
   Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   RefreshCcw,
   Save,
   Search,
@@ -122,6 +126,9 @@ export function App(): JSX.Element {
   );
   const [sidebarWidth, setSidebarWidth] = useState(() =>
     readStoredNumber(LAYOUT_STORAGE_KEYS.sidebarWidth, 260)
+  );
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    readStoredBoolean("stolow.layout.sidebarOpen", true)
   );
   const [rightPanelWidth, setRightPanelWidth] = useState(() =>
     readStoredNumber(LAYOUT_STORAGE_KEYS.rightPanelWidth, 320)
@@ -517,6 +524,14 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     try {
+      localStorage.setItem("stolow.layout.sidebarOpen", sidebarOpen ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [sidebarOpen]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem(LAYOUT_STORAGE_KEYS.rightPanelWidth, String(Math.round(rightPanelWidth)));
     } catch {
       /* ignore */
@@ -665,6 +680,7 @@ export function App(): JSX.Element {
       // Mod+F: open search tab and focus query
       if (event.key.toLowerCase() === "f") {
         event.preventDefault();
+        if (!sidebarOpen) setSidebarOpen(true);
         setSidebarTab("search");
         window.setTimeout(() => focusSearchRef.current?.(), 0);
         return;
@@ -722,118 +738,122 @@ export function App(): JSX.Element {
 
   return (
     <main className="app-shell">
-      <ProjectSidebar
-        activeFile={activeFile}
-        groupedFiles={groupedFiles}
-        isDirty={isDirty}
-        isOpening={isOpening}
-        isSaving={isSaving}
-        onCreateMarkdown={createNewMarkdown}
-        onDeleteFile={(file) => {
-          if (!project) return;
-          const deletingActive = activeFile?.relativePath === file.relativePath;
-          const hasUnsaved = deletingActive && isDirty;
-          const message = hasUnsaved
-            ? `未保存の変更があります。\n\n${file.relativePath}\nを削除しますか？`
-            : `${file.relativePath}\nを削除しますか？`;
+      {sidebarOpen ? (
+        <ProjectSidebar
+          activeFile={activeFile}
+          groupedFiles={groupedFiles}
+          isDirty={isDirty}
+          isOpening={isOpening}
+          isSaving={isSaving}
+          onCreateMarkdown={createNewMarkdown}
+          onDeleteFile={(file) => {
+            if (!project) return;
+            const deletingActive = activeFile?.relativePath === file.relativePath;
+            const hasUnsaved = deletingActive && isDirty;
+            const message = hasUnsaved
+              ? `未保存の変更があります。\n\n${file.relativePath}\nを削除しますか？`
+              : `${file.relativePath}\nを削除しますか？`;
 
-          if (!window.confirm(message)) return;
+            if (!window.confirm(message)) return;
 
-          void (async () => {
-            try {
-              await window.stolow.deleteMarkdownFile(project.rootPath, file.relativePath);
-              if (deletingActive) {
-                setActiveFile(null);
-                setDocumentText("");
-                setLastSavedText("");
-                setSelection(EMPTY_SELECTION);
+            void (async () => {
+              try {
+                await window.stolow.deleteMarkdownFile(project.rootPath, file.relativePath);
+                if (deletingActive) {
+                  setActiveFile(null);
+                  setDocumentText("");
+                  setLastSavedText("");
+                  setSelection(EMPTY_SELECTION);
+                }
+                await refreshProject(project.rootPath, null);
+                setStatusMessage(`${file.relativePath} を削除しました。`);
+                setPanelError(null);
+              } catch (error) {
+                console.error(error);
+                setPanelError(error instanceof Error ? error.message : "ファイル削除に失敗しました。");
               }
-              await refreshProject(project.rootPath, null);
-              setStatusMessage(`${file.relativePath} を削除しました。`);
-              setPanelError(null);
-            } catch (error) {
-              console.error(error);
-              setPanelError(error instanceof Error ? error.message : "ファイル削除に失敗しました。");
+            })();
+          }}
+          onDuplicateFile={(file) => {
+            if (!project) return;
+            void (async () => {
+              try {
+                const duplicated = await window.stolow.duplicateMarkdownFile(project.rootPath, file.relativePath);
+                await refreshProject(project.rootPath, duplicated);
+                setStatusMessage(`${file.relativePath} を複製しました。`);
+                setPanelError(null);
+              } catch (error) {
+                console.error(error);
+                setPanelError(error instanceof Error ? error.message : "ファイル複製に失敗しました。");
+              }
+            })();
+          }}
+          onFileSelect={(file) => {
+            if (isDirty) {
+              setStatusMessage("未保存の変更があります。必要なら保存してから別ファイルを開いてください。");
+              setPanelError("未保存の変更があります。保存してから別ファイルを開いてください。");
+              return;
             }
-          })();
-        }}
-        onDuplicateFile={(file) => {
-          if (!project) return;
-          void (async () => {
-            try {
-              const duplicated = await window.stolow.duplicateMarkdownFile(project.rootPath, file.relativePath);
-              await refreshProject(project.rootPath, duplicated);
-              setStatusMessage(`${file.relativePath} を複製しました。`);
-              setPanelError(null);
-            } catch (error) {
-              console.error(error);
-              setPanelError(error instanceof Error ? error.message : "ファイル複製に失敗しました。");
-            }
-          })();
-        }}
-        onFileSelect={(file) => {
-          if (isDirty) {
-            setStatusMessage("未保存の変更があります。必要なら保存してから別ファイルを開いてください。");
-            setPanelError("未保存の変更があります。保存してから別ファイルを開いてください。");
-            return;
+            void loadFile(file);
+          }}
+          onOpenProject={openProject}
+          onOpenSearch={() => {
+            setSidebarTab((current) => (current === "search" ? "files" : "search"));
+            window.setTimeout(() => focusSearchRef.current?.(), 0);
+          }}
+          onOpenSettings={() => {
+            void window.stolow?.openSettingsWindow();
+          }}
+          onRefresh={() => {
+            if (project) void refreshProject(project.rootPath, activeFile);
+          }}
+          onSave={saveFile}
+          project={project}
+          searchPanel={
+            <SearchPanel
+              error={panelError}
+              project={project}
+              registerFocus={(fn) => {
+                focusSearchRef.current = fn;
+              }}
+              onJump={async (relativePath, from, to) => {
+                if (!project) return;
+                const file = project.files.find((f) => f.relativePath === relativePath);
+                if (!file) return;
+                await loadFile(file);
+                const head = to;
+                setSelection({
+                  from,
+                  to,
+                  head,
+                  selectedText: ""
+                });
+              }}
+              onRefreshAfterReplace={async () => {
+                if (!project) return;
+                await refreshProject(project.rootPath, activeFile);
+                if (activeFile) {
+                  await loadFile(activeFile);
+                }
+              }}
+              setPanelError={setPanelError}
+              setStatusMessage={setStatusMessage}
+            />
           }
-          void loadFile(file);
-        }}
-        onOpenProject={openProject}
-        onOpenSearch={() => {
-          setSidebarTab((current) => (current === "search" ? "files" : "search"));
-          window.setTimeout(() => focusSearchRef.current?.(), 0);
-        }}
-        onOpenSettings={() => {
-          void window.stolow?.openSettingsWindow();
-        }}
-        onRefresh={() => {
-          if (project) void refreshProject(project.rootPath, activeFile);
-        }}
-        onSave={saveFile}
-        project={project}
-        searchPanel={
-          <SearchPanel
-            error={panelError}
-            project={project}
-            registerFocus={(fn) => {
-              focusSearchRef.current = fn;
-            }}
-            onJump={async (relativePath, from, to) => {
-              if (!project) return;
-              const file = project.files.find((f) => f.relativePath === relativePath);
-              if (!file) return;
-              await loadFile(file);
-              const head = to;
-              setSelection({
-                from,
-                to,
-                head,
-                selectedText: ""
-              });
-            }}
-            onRefreshAfterReplace={async () => {
-              if (!project) return;
-              await refreshProject(project.rootPath, activeFile);
-              if (activeFile) {
-                await loadFile(activeFile);
-              }
-            }}
-            setPanelError={setPanelError}
-            setStatusMessage={setStatusMessage}
-          />
-        }
-        sidebarTab={sidebarTab}
-        sidebarWidth={sidebarWidth}
-      />
+          sidebarTab={sidebarTab}
+          sidebarWidth={sidebarWidth}
+        />
+      ) : null}
 
-      <div
-        aria-orientation="vertical"
-        aria-label="サイドバー幅を変更"
-        className="pane-resizer"
-        onMouseDown={beginResizeSidebar}
-        role="separator"
-      />
+      {sidebarOpen ? (
+        <div
+          aria-orientation="vertical"
+          aria-label="サイドバー幅を変更"
+          className="pane-resizer"
+          onMouseDown={beginResizeSidebar}
+          role="separator"
+        />
+      ) : null}
 
       <section className="editor-pane" aria-label="Markdown editor">
         {!aiPanelOpen && panelError ? (
@@ -871,6 +891,29 @@ export function App(): JSX.Element {
             {`Model: ${PROFILE_LABELS[modelProfile]}`}
             <span aria-hidden className="meta-sep" />
             {isLoadingFile ? "読み込み中…" : `${documentText.length.toLocaleString()} 文字`}
+            <span aria-hidden className="meta-sep" />
+            <button
+              aria-label={sidebarOpen ? "左バーを閉じる" : "左バーを開く"}
+              className="icon-button"
+              onClick={() => setSidebarOpen((current) => !current)}
+              title={sidebarOpen ? "左バーを閉じる" : "左バーを開く"}
+              type="button"
+            >
+              {sidebarOpen ? <PanelLeftClose aria-hidden size={16} /> : <PanelLeftOpen aria-hidden size={16} />}
+            </button>
+            <button
+              aria-label={aiPanelOpen ? "右パネルを閉じる" : "右パネルを開く"}
+              className="icon-button"
+              onClick={() => setAiPanelOpen((current) => !current)}
+              title={aiPanelOpen ? "右パネルを閉じる" : "右パネルを開く"}
+              type="button"
+            >
+              {aiPanelOpen ? (
+                <PanelRightClose aria-hidden size={16} />
+              ) : (
+                <PanelRightOpen aria-hidden size={16} />
+              )}
+            </button>
           </div>
         </div>
         <MarkdownEditor
@@ -893,7 +936,7 @@ export function App(): JSX.Element {
         <>
           <div
             aria-orientation="vertical"
-            aria-label="AIパネル幅を変更"
+            aria-label="右パネル幅を変更"
             className="pane-resizer"
             onMouseDown={beginResizeSuggestionPane}
             role="separator"
@@ -1023,18 +1066,7 @@ export function App(): JSX.Element {
             )}
           </aside>
         </>
-      ) : (
-        <button
-          aria-label="AI サジェストパネルを開く"
-          className="ai-panel-reopen"
-          onClick={() => setAiPanelOpen(true)}
-          title="AI サジェストを表示"
-          type="button"
-        >
-          <Sparkles aria-hidden size={18} />
-          AI
-        </button>
-      )}
+      ) : null}
       {previewPlan ? (
         <div
           className="modal-backdrop"
