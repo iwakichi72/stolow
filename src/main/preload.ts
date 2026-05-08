@@ -30,7 +30,8 @@ const api: StolowApi = {
     ipcRenderer.invoke("project:search", projectPath, options),
   replacePreview: (payload: ProjectReplacePreviewPayload) =>
     ipcRenderer.invoke("project:replacePreview", payload),
-  replaceApply: (payload: ProjectReplaceApplyPayload) => ipcRenderer.invoke("project:replaceApply", payload)
+  replaceApply: (payload: ProjectReplaceApplyPayload) => ipcRenderer.invoke("project:replaceApply", payload),
+  getProjectStats: (projectPath: string) => ipcRenderer.invoke("project:getStats", projectPath)
 };
 
 contextBridge.exposeInMainWorld("stolow", api);

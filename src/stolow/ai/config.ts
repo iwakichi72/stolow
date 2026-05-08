@@ -17,8 +17,14 @@ export function normalizeSettings(settings?: Partial<StolowSettings> | null): St
     ...(settings ?? {})
   };
 
+  const targetChars =
+    typeof merged.targetChars === "number" && Number.isFinite(merged.targetChars) && merged.targetChars >= 0
+      ? Math.min(50_000_000, Math.round(merged.targetChars))
+      : undefined;
+
   return {
     ...merged,
+    targetChars,
     suggestionCount: clampInteger(merged.suggestionCount, 1, 5, DEFAULT_STOLOW_SETTINGS.suggestionCount),
     maxParagraphChars: clampInteger(
       merged.maxParagraphChars,

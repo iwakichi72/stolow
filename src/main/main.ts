@@ -14,6 +14,7 @@ import type {
   ProjectReplacePreviewResult,
   ProjectSearchOptions,
   ProjectSearchResult,
+  ProjectStats,
   SaveFileResult,
   StolowAppSettings,
   StolowSettings
@@ -381,6 +382,35 @@ function registerIpcHandlers(): void {
       return await replaceApplyProjectFiles(rootPath, snapshot.files, normalizedOptions, payload.replace);
     }
   );
+
+  ipcMain.handle("project:getStats", async (_event, projectPath: string): Promise<ProjectStats> => {
+    const rootPath = canonicalProjectRoot(projectPath);
+    const snapshot = await readProjectSnapshot(rootPath);
+    let totalChars = 0;
+    let manuscriptChars = 0;
+    let contextChars = 0;
+    let manuscriptFileCount = 0;
+
+    for (const file of snapshot.files) {
+      const text = await readOptionalProjectFile(rootPath, file.relativePath);
+      const len = text.length;
+      totalChars += len;
+      if (file.kind === "manuscript") {
+        manuscriptChars += len;
+        manuscriptFileCount += 1;
+      } else if (file.kind === "context") {
+        contextChars += len;
+      }
+    }
+
+    return {
+      totalChars,
+      manuscriptChars,
+      contextChars,
+      fileCount: snapshot.files.length,
+      manuscriptFileCount
+    };
+  });
 }
 
 function extractChapterByHeadingLevel(

@@ -24,6 +24,8 @@ export interface StolowSettings {
   suggestionCount: number;
   maxParagraphChars: number;
   requestTimeoutMs: number;
+  /** プロジェクト全体の目標文字数（任意） */
+  targetChars?: number;
 }
 
 export interface StolowAppSettings {
@@ -134,6 +136,14 @@ export interface ProjectReplaceApplyResult {
   updatedFiles: number;
 }
 
+export interface ProjectStats {
+  totalChars: number;
+  manuscriptChars: number;
+  contextChars: number;
+  fileCount: number;
+  manuscriptFileCount: number;
+}
+
 export interface StolowApi {
   openProject: () => Promise<ProjectSnapshot | null>;
   openLastProject: () => Promise<ProjectSnapshot | null>;
@@ -150,4 +160,5 @@ export interface StolowApi {
   searchProject: (projectPath: string, options: ProjectSearchOptions) => Promise<ProjectSearchResult>;
   replacePreview: (payload: ProjectReplacePreviewPayload) => Promise<ProjectReplacePreviewResult>;
   replaceApply: (payload: ProjectReplaceApplyPayload) => Promise<ProjectReplaceApplyResult>;
+  getProjectStats: (projectPath: string) => Promise<ProjectStats>;
 }
