@@ -22,6 +22,7 @@ import type {
 import { DEFAULT_STOLOW_SETTINGS, normalizeSettings } from "../stolow/ai/config.js";
 import { generateSuggestions } from "../stolow/ai/generateSuggestions.js";
 import { StolowAiError } from "../stolow/ai/stolowAiError.js";
+import { deleteFileOrThrow, pickDuplicateRelativePath } from "./fileOps.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -287,7 +288,7 @@ function registerIpcHandlers(): void {
         const rootPath = canonicalProjectRoot(projectPath);
         const normalized = normalizeNewMarkdownRelativePath(relativePath);
         const filePath = resolveProjectMarkdownPath(rootPath, normalized);
-        await fs.unlink(filePath);
+        await deleteFileOrThrow(filePath);
       } catch (error) {
         console.error("Failed to delete file", error);
         throw new Error("ファイル削除に失敗しました。");
@@ -728,25 +729,6 @@ async function pathExists(filePath: string): Promise<boolean> {
 
 function toPosix(relativePath: string): string {
   return relativePath.split(path.sep).join("/");
-}
-
-async function pickDuplicateRelativePath(projectRoot: string, dir: string, baseName: string): Promise<string> {
-  const safeDir = dir === "." ? "" : dir.replace(/^\/+/, "").replace(/\/+$/, "");
-  const prefix = safeDir ? `${safeDir}/` : "";
-
-  const baseCandidate = `${prefix}${baseName} - コピー.md`;
-  if (!(await pathExists(resolveProjectMarkdownPath(projectRoot, baseCandidate)))) {
-    return baseCandidate;
-  }
-
-  for (let i = 2; i <= 200; i++) {
-    const candidate = `${prefix}${baseName} - コピー ${i}.md`;
-    if (!(await pathExists(resolveProjectMarkdownPath(projectRoot, candidate)))) {
-      return candidate;
-    }
-  }
-
-  throw new Error("複製ファイル名を決められませんでした。");
 }
 
 function toUserFacingAiMessage(error: unknown): string {
