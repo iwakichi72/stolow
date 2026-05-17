@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   GenerateSuggestionsPayload,
+  MenuAction,
   ProjectReplaceApplyPayload,
   ProjectReplacePreviewPayload,
   ProjectSearchOptions,
@@ -35,7 +36,17 @@ const api: StolowApi = {
   replacePreview: (payload: ProjectReplacePreviewPayload) =>
     ipcRenderer.invoke("project:replacePreview", payload),
   replaceApply: (payload: ProjectReplaceApplyPayload) => ipcRenderer.invoke("project:replaceApply", payload),
-  getProjectStats: (projectPath: string) => ipcRenderer.invoke("project:getStats", projectPath)
+  getProjectStats: (projectPath: string) => ipcRenderer.invoke("project:getStats", projectPath),
+  notifyDirty: (isDirty: boolean) => {
+    ipcRenderer.send("app:notifyDirty", isDirty);
+  },
+  onMenuAction: (handler: (action: MenuAction) => void) => {
+    const listener = (_event: unknown, action: MenuAction): void => handler(action);
+    ipcRenderer.on("menu:action", listener);
+    return () => {
+      ipcRenderer.off("menu:action", listener);
+    };
+  }
 };
 
 contextBridge.exposeInMainWorld("stolow", api);

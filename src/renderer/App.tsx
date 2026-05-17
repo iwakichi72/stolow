@@ -139,9 +139,12 @@ export function App(): JSX.Element {
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>("ai");
   const [appliedCardId, setAppliedCardId] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
+  const [generationAnnouncement, setGenerationAnnouncement] = useState("");
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const focusSearchRef = useRef<null | (() => void)>(null);
   const projectRef = useRef<ProjectSnapshot | null>(null);
+  const previewModalRef = useRef<HTMLDivElement | null>(null);
+  const newFileModalRef = useRef<HTMLDivElement | null>(null);
   const [previewPlan, setPreviewPlan] = useState<null | {
     title: string;
     kindLabel: string;
@@ -400,8 +403,11 @@ export function App(): JSX.Element {
         settings: settingsDraft
       });
       setSuggestionResult(result);
-      setStatusMessage(
-        result.kind === "rewrite" ? "リライト候補を生成しました。" : "次段落候補を生成しました。"
+      const summary =
+        result.kind === "rewrite" ? "リライト候補を生成しました。" : "次段落候補を生成しました。";
+      setStatusMessage(summary);
+      setGenerationAnnouncement(
+        `${summary} ${result.suggestions.length.toLocaleString()} 件の候補があります。`
       );
     } catch (error) {
       console.error(error);
@@ -645,14 +651,130 @@ export function App(): JSX.Element {
   }, [isDirty, newFileModal, project, refreshProject]);
 
   useEffect(() => {
-    const onBeforeUnload = (event: BeforeUnloadEvent): void => {
-      if (!isDirty) return;
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+    // メイン側に未保存状態を伝えて、close / before-quit でガードしてもらう
+    window.stolow?.notifyDirty?.(isDirty);
   }, [isDirty]);
+
+  // macOS で vibrancy / hiddenInset を使うときに body へクラスを付け、
+  // 信号機分の余白やサイドバー半透明のスタイルを有効化する
+  useEffect(() => {
+    const isMac =
+      typeof navigator !== "undefined" && navigator.platform.toLowerCase().includes("mac");
+    if (!isMac) return;
+    document.documentElement.classList.add("macos-vibrancy");
+    return () => document.documentElement.classList.remove("macos-vibrancy");
+  }, []);
+
+  // アプリケーションメニューからの ⌘ アクションを受信
+  useEffect(() => {
+    if (!window.stolow?.onMenuAction) return;
+    return window.stolow.onMenuAction((action) => {
+      switch (action) {
+        case "openProject":
+          void openProject();
+          return;
+        case "newManuscript":
+          void createNewMarkdown("manuscript");
+          return;
+        case "newContext":
+          void createNewMarkdown("context");
+          return;
+        case "save":
+          void saveFile();
+          return;
+        case "search":
+          if (!sidebarOpen) setSidebarOpen(true);
+          setSidebarTab("search");
+          window.setTimeout(() => focusSearchRef.current?.(), 0);
+          return;
+        case "toggleSidebar":
+          setSidebarOpen((current) => !current);
+          return;
+        case "toggleRightPanel":
+          setAiPanelOpen((current) => !current);
+          return;
+        case "rightTabAi":
+          if (!aiPanelOpen) setAiPanelOpen(true);
+          setRightPanelTab("ai");
+          return;
+        case "rightTabOutline":
+          if (!aiPanelOpen) setAiPanelOpen(true);
+          setRightPanelTab("outline");
+          return;
+        case "rightTabContext":
+          if (!aiPanelOpen) setAiPanelOpen(true);
+          setRightPanelTab("context");
+          return;
+        case "rightTabStats":
+          if (!aiPanelOpen) setAiPanelOpen(true);
+          setRightPanelTab("stats");
+          return;
+        case "generate":
+          if (!aiPanelOpen) setAiPanelOpen(true);
+          setRightPanelTab("ai");
+          void generate();
+          return;
+      }
+    });
+  }, [aiPanelOpen, createNewMarkdown, generate, openProject, saveFile, sidebarOpen]);
+
+  // モーダル表示中はフォーカスをモーダル内に閉じ込める
+  useEffect(() => {
+    const modal = previewPlan ? previewModalRef.current : newFileModal ? newFileModalRef.current : null;
+    if (!modal) return;
+
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    const focusableSelectors =
+      'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+    const getFocusable = (): HTMLElement[] =>
+      Array.from(modal.querySelectorAll<HTMLElement>(focusableSelectors)).filter(
+        (el) => !el.hasAttribute("aria-hidden")
+      );
+
+    // 自動フォーカス先がなければ先頭の要素にフォーカス
+    if (!modal.contains(document.activeElement)) {
+      const first = getFocusable()[0];
+      first?.focus();
+    }
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (previewPlan) setPreviewPlan(null);
+        else if (newFileModal) setNewFileModal(null);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (event.shiftKey) {
+        if (active === first || !modal.contains(active)) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (active === last || !modal.contains(active)) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    modal.addEventListener("keydown", onKeyDown);
+    return () => {
+      modal.removeEventListener("keydown", onKeyDown);
+      previouslyFocused?.focus?.();
+    };
+  }, [newFileModal, previewPlan]);
 
   useEffect(() => {
     const isEditableElement = (target: EventTarget | null): boolean => {
@@ -737,7 +859,7 @@ export function App(): JSX.Element {
   ]);
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell${sidebarOpen ? "" : " sidebar-closed"}`}>
       {sidebarOpen ? (
         <ProjectSidebar
           activeFile={activeFile}
@@ -864,6 +986,9 @@ export function App(): JSX.Element {
         ) : null}
         <div className="editor-topbar">
           <div className="document-title">
+            {isDirty ? (
+              <span aria-label="未保存の変更があります" className="dirty-dot" title="未保存の変更があります" />
+            ) : null}
             <span title={activeFile?.relativePath}>
               {activeFile ? `${activeFile.name}` : "ファイル未選択"}
             </span>
@@ -877,19 +1002,9 @@ export function App(): JSX.Element {
                 <Loader2 aria-hidden className="spin" size={11} />
                 保存中
               </span>
-            ) : isDirty ? (
-              <strong className="dirty-badge" aria-live="polite">
-                未保存
-              </strong>
-            ) : activeFile ? (
-              <span className="saved-badge">保存済み</span>
             ) : null}
           </div>
           <div className="document-meta">
-            {`Mode: ${MODE_LABELS[mode]}`}
-            <span aria-hidden className="meta-sep" />
-            {`Model: ${PROFILE_LABELS[modelProfile]}`}
-            <span aria-hidden className="meta-sep" />
             {isLoadingFile ? "読み込み中…" : `${documentText.length.toLocaleString()} 文字`}
             <span aria-hidden className="meta-sep" />
             <button
@@ -927,7 +1042,8 @@ export function App(): JSX.Element {
         <div className="statusbar">
           <span>{statusMessage}</span>
           <span>
-            {selectedChars > 0 ? `${selectedChars.toLocaleString()} 文字を選択中` : "選択なし"}
+            {`${MODE_LABELS[mode]} · ${PROFILE_LABELS[modelProfile]}`}
+            {selectedChars > 0 ? ` · ${selectedChars.toLocaleString()} 文字を選択中` : ""}
           </span>
         </div>
       </section>
@@ -958,9 +1074,10 @@ export function App(): JSX.Element {
                     className={rightPanelTab === "ai" ? "active" : ""}
                     onClick={() => setRightPanelTab("ai")}
                     role="tab"
+                    title="AI サジェスト"
                     type="button"
                   >
-                    AI
+                    生成
                   </button>
                   <button
                     aria-selected={rightPanelTab === "outline"}
@@ -1069,6 +1186,7 @@ export function App(): JSX.Element {
       ) : null}
       {previewPlan ? (
         <div
+          ref={previewModalRef}
           className="modal-backdrop"
           role="dialog"
           aria-modal="true"
@@ -1083,11 +1201,9 @@ export function App(): JSX.Element {
                 <h3>{previewPlan.title}</h3>
                 <p>{previewPlan.kindLabel}</p>
               </div>
-              <div className="modal-actions">
-                <button className="icon-button" onClick={() => setPreviewPlan(null)} type="button">
-                  <X aria-hidden size={16} />
-                </button>
-              </div>
+              <span className="modal-esc-hint" aria-hidden>
+                Esc で閉じる
+              </span>
             </div>
             <div className="modal-grid">
               <section className="modal-pane">
@@ -1122,6 +1238,7 @@ export function App(): JSX.Element {
       ) : null}
       {newFileModal ? (
         <div
+          ref={newFileModalRef}
           className="modal-backdrop"
           role="dialog"
           aria-modal="true"
@@ -1140,26 +1257,27 @@ export function App(): JSX.Element {
                     : "context/ に作成します（拡張子は省略可）"}
                 </p>
               </div>
-              <div className="modal-actions">
-                <button className="icon-button" onClick={() => setNewFileModal(null)} type="button">
-                  <X aria-hidden size={16} />
-                </button>
-              </div>
+              <span className="modal-esc-hint" aria-hidden>
+                Esc で閉じる
+              </span>
             </div>
             <div className="modal-grid" style={{ gridTemplateColumns: "1fr" }}>
               <section className="modal-pane">
                 <h4>ファイル名</h4>
-                <div style={{ padding: 12 }}>
+                <div className="new-file-input-row">
+                  <span className="new-file-prefix" aria-hidden>
+                    {newFileModal.folder === "manuscript" ? "manuscript/" : "context/"}
+                  </span>
                   <input
                     autoFocus
-                    className="select-input"
+                    className="select-input new-file-input"
                     value={newFileModal.value}
                     onChange={(e) => setNewFileModal((cur) => (cur ? { ...cur, value: e.target.value } : cur))}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") void submitNewFile();
                       if (e.key === "Escape") setNewFileModal(null);
                     }}
-                    placeholder="例: 02-first-meeting"
+                    placeholder="例: 02-first-meeting.md"
                     spellCheck={false}
                   />
                 </div>
@@ -1176,6 +1294,9 @@ export function App(): JSX.Element {
           </div>
         </div>
       ) : null}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {generationAnnouncement}
+      </div>
     </main>
   );
 }

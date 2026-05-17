@@ -1,10 +1,20 @@
 import { existsSync, realpathSync } from "node:fs";
-import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  type BrowserWindowConstructorOptions,
+  type MenuItemConstructorOptions,
+  type OpenDialogOptions
+} from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
   GenerateSuggestionsPayload,
+  MenuAction,
   ProjectFile,
   ProjectFileKind,
   ProjectSnapshot,
@@ -46,6 +56,9 @@ const MAX_SEARCH_FILES_WITH_MATCHES = 250;
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let currentProjectRoot: string | null = null;
+let mainIsDirty = false;
+/** ユーザーが「破棄して閉じる」を確認済みのとき true。close→destroy のループを避けるため。 */
+let allowMainClose = false;
 
 const DEFAULT_APP_SETTINGS: StolowAppSettings = {
   autoCreateProjectStructure: true,
@@ -90,18 +103,41 @@ function resolveWindowIcon(): string | undefined {
 }
 
 function createWindow(): void {
-  mainWindow = new BrowserWindow({
+  const isMac = process.platform === "darwin";
+  const options: BrowserWindowConstructorOptions = {
     width: 1320,
     height: 860,
     minWidth: 980,
     minHeight: 640,
     title: "Stolow",
     icon: resolveWindowIcon(),
-    backgroundColor: "#191712",
+    // renderer の --bg と一致させ、起動時のフラッシュを避ける
+    backgroundColor: "#0f1117",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false
+    }
+  };
+
+  if (isMac) {
+    options.titleBarStyle = "hiddenInset";
+    options.trafficLightPosition = { x: 14, y: 14 };
+    options.vibrancy = "sidebar";
+    options.visualEffectState = "active";
+    // vibrancy を活かすには backgroundColor を透明にする
+    options.backgroundColor = "#00000000";
+  }
+
+  mainWindow = new BrowserWindow(options);
+
+  mainWindow.on("close", (event) => {
+    if (allowMainClose || !mainIsDirty || !mainWindow) return;
+    event.preventDefault();
+    if (confirmDiscardUnsaved(mainWindow)) {
+      allowMainClose = true;
+      mainIsDirty = false;
+      mainWindow.destroy();
     }
   });
 
@@ -111,6 +147,188 @@ function createWindow(): void {
   } else {
     void mainWindow.loadFile(path.resolve(__dirname, "../../dist/renderer/index.html"));
   }
+}
+
+function confirmDiscardUnsaved(window: BrowserWindow): boolean {
+  const choice = dialog.showMessageBoxSync(window, {
+    type: "warning",
+    buttons: ["キャンセル", "破棄して閉じる"],
+    defaultId: 0,
+    cancelId: 0,
+    title: "未保存の変更があります",
+    message: "未保存の変更があります",
+    detail: "保存していない変更があります。破棄して閉じますか？"
+  });
+  return choice === 1;
+}
+
+function sendMenuAction(action: MenuAction): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("menu:action", action);
+}
+
+function buildApplicationMenu(): void {
+  const isMac = process.platform === "darwin";
+
+  const appMenu: MenuItemConstructorOptions = {
+    label: app.name,
+    submenu: [
+      { role: "about" },
+      { type: "separator" },
+      {
+        label: "設定…",
+        accelerator: "CmdOrCtrl+,",
+        click: () => {
+          openSettingsWindow();
+        }
+      },
+      { type: "separator" },
+      { role: "services" },
+      { type: "separator" },
+      { role: "hide" },
+      { role: "hideOthers" },
+      { role: "unhide" },
+      { type: "separator" },
+      { role: "quit" }
+    ]
+  };
+
+  const fileMenu: MenuItemConstructorOptions = {
+    label: "ファイル",
+    submenu: [
+      {
+        label: "プロジェクトを開く…",
+        accelerator: "CmdOrCtrl+O",
+        click: () => sendMenuAction("openProject")
+      },
+      { type: "separator" },
+      {
+        label: "新規 Markdown（manuscript）",
+        accelerator: "CmdOrCtrl+N",
+        click: () => sendMenuAction("newManuscript")
+      },
+      {
+        label: "新規 Markdown（context）",
+        accelerator: "CmdOrCtrl+Shift+N",
+        click: () => sendMenuAction("newContext")
+      },
+      { type: "separator" },
+      {
+        label: "保存",
+        accelerator: "CmdOrCtrl+S",
+        click: () => sendMenuAction("save")
+      },
+      { type: "separator" },
+      isMac ? { role: "close" } : { role: "quit" }
+    ]
+  };
+
+  const editMenu: MenuItemConstructorOptions = {
+    label: "編集",
+    submenu: [
+      { role: "undo" },
+      { role: "redo" },
+      { type: "separator" },
+      { role: "cut" },
+      { role: "copy" },
+      { role: "paste" },
+      { role: "selectAll" },
+      { type: "separator" },
+      {
+        label: "プロジェクト内検索",
+        accelerator: "CmdOrCtrl+Shift+F",
+        click: () => sendMenuAction("search")
+      }
+    ]
+  };
+
+  const viewMenu: MenuItemConstructorOptions = {
+    label: "表示",
+    submenu: [
+      {
+        label: "サイドバーを切り替え",
+        accelerator: "CmdOrCtrl+B",
+        click: () => sendMenuAction("toggleSidebar")
+      },
+      {
+        label: "右パネルを切り替え",
+        accelerator: "CmdOrCtrl+Alt+B",
+        click: () => sendMenuAction("toggleRightPanel")
+      },
+      { type: "separator" },
+      {
+        label: "右パネル: 生成",
+        accelerator: "CmdOrCtrl+1",
+        click: () => sendMenuAction("rightTabAi")
+      },
+      {
+        label: "右パネル: 構成",
+        accelerator: "CmdOrCtrl+2",
+        click: () => sendMenuAction("rightTabOutline")
+      },
+      {
+        label: "右パネル: 参照",
+        accelerator: "CmdOrCtrl+3",
+        click: () => sendMenuAction("rightTabContext")
+      },
+      {
+        label: "右パネル: 統計",
+        accelerator: "CmdOrCtrl+4",
+        click: () => sendMenuAction("rightTabStats")
+      },
+      { type: "separator" },
+      { role: "reload" },
+      { role: "toggleDevTools" },
+      { type: "separator" },
+      { role: "resetZoom" },
+      { role: "zoomIn" },
+      { role: "zoomOut" },
+      { type: "separator" },
+      { role: "togglefullscreen" }
+    ]
+  };
+
+  const generateMenu: MenuItemConstructorOptions = {
+    label: "生成",
+    submenu: [
+      {
+        label: "次段落 / リライト候補を生成",
+        accelerator: "CmdOrCtrl+Return",
+        click: () => sendMenuAction("generate")
+      }
+    ]
+  };
+
+  const windowSubmenu: MenuItemConstructorOptions[] = [
+    { role: "minimize" },
+    { role: "zoom" }
+  ];
+  if (isMac) {
+    windowSubmenu.push(
+      { type: "separator" },
+      { role: "front" },
+      { type: "separator" },
+      { role: "window" }
+    );
+  } else {
+    windowSubmenu.push({ role: "close" });
+  }
+
+  const windowMenu: MenuItemConstructorOptions = {
+    label: "ウインドウ",
+    submenu: windowSubmenu
+  };
+
+  const template: MenuItemConstructorOptions[] = [
+    ...(isMac ? [appMenu] : []),
+    fileMenu,
+    editMenu,
+    viewMenu,
+    generateMenu,
+    windowMenu
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function openSettingsWindow(): void {
@@ -127,7 +345,7 @@ function openSettingsWindow(): void {
     minHeight: 520,
     title: "Stolow 設定",
     icon: resolveWindowIcon(),
-    backgroundColor: "#191712",
+    backgroundColor: "#0f1117",
     parent: mainWindow ?? undefined,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -155,6 +373,7 @@ function openSettingsWindow(): void {
 
 app.whenReady().then(() => {
   registerIpcHandlers();
+  buildApplicationMenu();
   createWindow();
 
   app.on("activate", () => {
@@ -166,7 +385,21 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
+app.on("before-quit", (event) => {
+  if (allowMainClose || !mainIsDirty || !mainWindow || mainWindow.isDestroyed()) return;
+  event.preventDefault();
+  if (confirmDiscardUnsaved(mainWindow)) {
+    allowMainClose = true;
+    mainIsDirty = false;
+    app.quit();
+  }
+});
+
 function registerIpcHandlers(): void {
+  ipcMain.on("app:notifyDirty", (_event, isDirty: boolean) => {
+    mainIsDirty = Boolean(isDirty);
+  });
+
   ipcMain.handle("window:openSettings", async (): Promise<void> => {
     openSettingsWindow();
   });

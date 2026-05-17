@@ -144,6 +144,20 @@ export interface ProjectStats {
   manuscriptFileCount: number;
 }
 
+export type MenuAction =
+  | "openProject"
+  | "newManuscript"
+  | "newContext"
+  | "save"
+  | "search"
+  | "toggleSidebar"
+  | "toggleRightPanel"
+  | "rightTabAi"
+  | "rightTabOutline"
+  | "rightTabContext"
+  | "rightTabStats"
+  | "generate";
+
 export interface StolowApi {
   openProject: () => Promise<ProjectSnapshot | null>;
   openLastProject: () => Promise<ProjectSnapshot | null>;
@@ -163,4 +177,6 @@ export interface StolowApi {
   replacePreview: (payload: ProjectReplacePreviewPayload) => Promise<ProjectReplacePreviewResult>;
   replaceApply: (payload: ProjectReplaceApplyPayload) => Promise<ProjectReplaceApplyResult>;
   getProjectStats: (projectPath: string) => Promise<ProjectStats>;
+  notifyDirty: (isDirty: boolean) => void;
+  onMenuAction: (handler: (action: MenuAction) => void) => () => void;
 }
