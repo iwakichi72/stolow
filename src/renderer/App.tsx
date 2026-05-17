@@ -74,6 +74,69 @@ const EMPTY_SELECTION: EditorSelectionSnapshot = {
   selectedText: ""
 };
 
+interface DiffChunk {
+  type: "same" | "add" | "del";
+  text: string;
+}
+
+/** 文字単位の LCS で差分チャンクを返す。長すぎる入力は同・追加・削除の 1 チャンク扱いに退避する。 */
+function computeCharDiff(a: string, b: string): DiffChunk[] {
+  const MAX = 4000;
+  if (a.length > MAX || b.length > MAX) {
+    if (a === b) return [{ type: "same", text: a }];
+    const chunks: DiffChunk[] = [];
+    if (a.length > 0) chunks.push({ type: "del", text: a });
+    if (b.length > 0) chunks.push({ type: "add", text: b });
+    return chunks;
+  }
+
+  const aLen = a.length;
+  const bLen = b.length;
+  // dp[i][j] = LCS length of a[0..i] and b[0..j]
+  const dp: Uint32Array[] = Array.from({ length: aLen + 1 }, () => new Uint32Array(bLen + 1));
+  for (let i = 1; i <= aLen; i++) {
+    for (let j = 1; j <= bLen; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  // Backtrack to build reverse chunks
+  const reversed: DiffChunk[] = [];
+  let i = aLen;
+  let j = bLen;
+  const push = (type: DiffChunk["type"], ch: string): void => {
+    const last = reversed[reversed.length - 1];
+    if (last && last.type === type) last.text = ch + last.text;
+    else reversed.push({ type, text: ch });
+  };
+  while (i > 0 && j > 0) {
+    if (a[i - 1] === b[j - 1]) {
+      push("same", a[i - 1]);
+      i -= 1;
+      j -= 1;
+    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+      push("del", a[i - 1]);
+      i -= 1;
+    } else {
+      push("add", b[j - 1]);
+      j -= 1;
+    }
+  }
+  while (i > 0) {
+    push("del", a[i - 1]);
+    i -= 1;
+  }
+  while (j > 0) {
+    push("add", b[j - 1]);
+    j -= 1;
+  }
+  return reversed.reverse();
+}
+
 const LAYOUT_STORAGE_KEYS = {
   sidebarWidth: "stolow.layout.sidebarWidth",
   rightPanelWidth: "stolow.layout.rightPanelWidth",
@@ -124,6 +187,7 @@ export function App(): JSX.Element {
   const [newFileModal, setNewFileModal] = useState<null | { folder: "manuscript" | "context"; value: string }>(
     null
   );
+  const [renameModal, setRenameModal] = useState<null | { file: ProjectFile; value: string }>(null);
   const [sidebarWidth, setSidebarWidth] = useState(() =>
     readStoredNumber(LAYOUT_STORAGE_KEYS.sidebarWidth, 260)
   );
@@ -138,13 +202,17 @@ export function App(): JSX.Element {
   );
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>("ai");
   const [appliedCardId, setAppliedCardId] = useState<string | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const cancelRequestedRef = useRef(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
   const [generationAnnouncement, setGenerationAnnouncement] = useState("");
+  const [recentProjectPaths, setRecentProjectPaths] = useState<string[]>([]);
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const focusSearchRef = useRef<null | (() => void)>(null);
   const projectRef = useRef<ProjectSnapshot | null>(null);
   const previewModalRef = useRef<HTMLDivElement | null>(null);
   const newFileModalRef = useRef<HTMLDivElement | null>(null);
+  const renameModalRef = useRef<HTMLDivElement | null>(null);
   const [previewPlan, setPreviewPlan] = useState<null | {
     title: string;
     kindLabel: string;
@@ -160,6 +228,45 @@ export function App(): JSX.Element {
 
   const isDirty = activeFile !== null && documentText !== lastSavedText;
   const selectedChars = selection.to > selection.from ? selection.to - selection.from : 0;
+
+  const cursorPosition = useMemo(() => {
+    const head = Math.max(0, Math.min(selection.head, documentText.length));
+    let line = 1;
+    let lastLineStart = 0;
+    for (let i = 0; i < head; i++) {
+      if (documentText.charCodeAt(i) === 10) {
+        line += 1;
+        lastLineStart = i + 1;
+      }
+    }
+    return { line, column: head - lastLineStart + 1 };
+  }, [documentText, selection.head]);
+
+  const [statusPopover, setStatusPopover] = useState<null | "mode" | "model">(null);
+  const statusPopoverRef = useRef<HTMLDivElement | null>(null);
+  const statusModeBtnRef = useRef<HTMLButtonElement | null>(null);
+  const statusModelBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!statusPopover) return;
+    const onPointerDown = (event: PointerEvent): void => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (statusPopoverRef.current?.contains(target)) return;
+      if (statusModeBtnRef.current?.contains(target)) return;
+      if (statusModelBtnRef.current?.contains(target)) return;
+      setStatusPopover(null);
+    };
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setStatusPopover(null);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [statusPopover]);
   const contextFiles = useMemo(
     () => (project?.files ?? []).filter((file) => file.kind === "context"),
     [project?.files]
@@ -204,6 +311,20 @@ export function App(): JSX.Element {
   useEffect(() => {
     projectRef.current = project;
   }, [project]);
+
+  const refreshRecentProjects = useCallback(async (): Promise<void> => {
+    if (!window.stolow) return;
+    try {
+      const settings = await window.stolow.getAppSettings();
+      setRecentProjectPaths(settings.recentProjectPaths ?? []);
+    } catch (error) {
+      console.error(error);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshRecentProjects();
+  }, [project, refreshRecentProjects]);
 
   const loadFile = useCallback(
     async (file: ProjectFile, snapshot?: ProjectSnapshot | null): Promise<void> => {
@@ -253,6 +374,54 @@ export function App(): JSX.Element {
     },
     [loadFile]
   );
+
+  const adoptProjectSnapshot = useCallback(
+    async (snapshot: ProjectSnapshot): Promise<void> => {
+      setProject(snapshot);
+      setSettingsDraft(snapshot.settings);
+      setMode(snapshot.settings.defaultMode);
+      setStatusMessage(`${snapshot.name} を開きました。`);
+
+      const firstFile =
+        snapshot.files.find((file) => file.kind === "manuscript") ?? snapshot.files[0] ?? null;
+      if (firstFile) {
+        await loadFile(firstFile, snapshot);
+      } else {
+        setActiveFile(null);
+        setDocumentText("");
+        setLastSavedText("");
+        setSelection(EMPTY_SELECTION);
+        setStatusMessage("Markdown ファイルが見つかりません。manuscript/ に .md を追加してください。");
+      }
+    },
+    [loadFile]
+  );
+
+  const openProjectAtPath = useCallback(
+    async (rootPath: string): Promise<void> => {
+      if (!window.stolow?.openProjectAtPath) return;
+      setIsOpening(true);
+      setPanelError(null);
+      try {
+        const snapshot = await window.stolow.openProjectAtPath(rootPath);
+        if (!snapshot) {
+          setPanelError("プロジェクトを開けませんでした（フォルダが見つかりません）。");
+          return;
+        }
+        await adoptProjectSnapshot(snapshot);
+      } catch (error) {
+        console.error(error);
+        setPanelError("プロジェクトを開けませんでした。");
+      } finally {
+        setIsOpening(false);
+      }
+    },
+    [adoptProjectSnapshot]
+  );
+
+  const revealProject = useCallback((rootPath: string): void => {
+    void window.stolow?.revealProjectInFolder?.(rootPath);
+  }, []);
 
   const openProject = useCallback(async (): Promise<void> => {
     setIsOpening(true);
@@ -385,6 +554,8 @@ export function App(): JSX.Element {
     }
 
     const target = selection;
+    cancelRequestedRef.current = false;
+    setElapsedSeconds(0);
     setIsGenerating(true);
     setPanelError(null);
     setSuggestionResult(null);
@@ -410,9 +581,16 @@ export function App(): JSX.Element {
         `${summary} ${result.suggestions.length.toLocaleString()} 件の候補があります。`
       );
     } catch (error) {
-      console.error(error);
-      setPanelError(error instanceof Error ? error.message : "AI生成に失敗しました。");
+      const message = error instanceof Error ? error.message : "AI生成に失敗しました。";
+      if (cancelRequestedRef.current || message === "CANCELLED") {
+        setStatusMessage("生成をキャンセルしました。");
+        setPanelError(null);
+      } else {
+        console.error(error);
+        setPanelError(message);
+      }
     } finally {
+      cancelRequestedRef.current = false;
       setIsGenerating(false);
     }
   }, [
@@ -426,6 +604,12 @@ export function App(): JSX.Element {
     selectedContextFiles,
     settingsDraft
   ]);
+
+  const cancelGeneration = useCallback((): void => {
+    if (!isGenerating) return;
+    cancelRequestedRef.current = true;
+    window.stolow?.cancelGeneration?.();
+  }, [isGenerating]);
 
   const buildApplyPlan = useCallback(
     (candidate: SuggestionCandidate) => {
@@ -498,6 +682,19 @@ export function App(): JSX.Element {
     const timer = window.setTimeout(() => setAppliedCardId(null), 700);
     return () => window.clearTimeout(timer);
   }, [appliedCardId]);
+
+  // 生成中の経過秒数を 1 秒ごとに更新
+  useEffect(() => {
+    if (!isGenerating) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const start = Date.now();
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - start) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isGenerating]);
 
   useEffect(() => {
     if (!project) return;
@@ -602,6 +799,82 @@ export function App(): JSX.Element {
     [rightPanelWidth]
   );
 
+  const handleDeleteFile = useCallback(
+    (file: ProjectFile): void => {
+      if (!project) return;
+      const deletingActive = activeFile?.relativePath === file.relativePath;
+      const hasUnsaved = deletingActive && isDirty;
+      const message = hasUnsaved
+        ? `未保存の変更があります。\n\n${file.relativePath}\nを削除しますか？`
+        : `${file.relativePath}\nを削除しますか？`;
+      if (!window.confirm(message)) return;
+
+      void (async () => {
+        try {
+          await window.stolow.deleteMarkdownFile(project.rootPath, file.relativePath);
+          if (deletingActive) {
+            setActiveFile(null);
+            setDocumentText("");
+            setLastSavedText("");
+            setSelection(EMPTY_SELECTION);
+          }
+          await refreshProject(project.rootPath, null);
+          setStatusMessage(`${file.relativePath} を削除しました。`);
+          setPanelError(null);
+        } catch (error) {
+          console.error(error);
+          setPanelError(error instanceof Error ? error.message : "ファイル削除に失敗しました。");
+        }
+      })();
+    },
+    [activeFile, isDirty, project, refreshProject]
+  );
+
+  const handleDuplicateFile = useCallback(
+    (file: ProjectFile): void => {
+      if (!project) return;
+      void (async () => {
+        try {
+          const duplicated = await window.stolow.duplicateMarkdownFile(
+            project.rootPath,
+            file.relativePath
+          );
+          await refreshProject(project.rootPath, duplicated);
+          setStatusMessage(`${file.relativePath} を複製しました。`);
+          setPanelError(null);
+        } catch (error) {
+          console.error(error);
+          setPanelError(error instanceof Error ? error.message : "ファイル複製に失敗しました。");
+        }
+      })();
+    },
+    [project, refreshProject]
+  );
+
+  const handleRequestNativeMenu = useCallback(
+    (file: ProjectFile): void => {
+      if (!project || !window.stolow?.showFileContextMenu) return;
+      void (async () => {
+        try {
+          const action = await window.stolow.showFileContextMenu(project.rootPath, {
+            relativePath: file.relativePath,
+            name: file.name,
+            kind: file.kind
+          });
+          if (action === "duplicate") handleDuplicateFile(file);
+          else if (action === "delete") handleDeleteFile(file);
+          else if (action === "rename") {
+            const base = file.name.replace(/\.md$/i, "");
+            setRenameModal({ file, value: base });
+          }
+        } catch (error) {
+          console.error(error);
+        }
+      })();
+    },
+    [handleDeleteFile, handleDuplicateFile, project]
+  );
+
   const createNewMarkdown = useCallback(
     async (folder: "manuscript" | "context"): Promise<void> => {
       if (!project) return;
@@ -617,6 +890,38 @@ export function App(): JSX.Element {
     },
     [isDirty, project, refreshProject]
   );
+
+  const submitRename = useCallback(async (): Promise<void> => {
+    if (!project || !renameModal) return;
+    if (isDirty && renameModal.file.relativePath === activeFile?.relativePath) {
+      setPanelError("未保存の変更があります。保存してからリネームしてください。");
+      return;
+    }
+
+    const raw = renameModal.value.trim().replace(/\\/g, "/");
+    if (!raw) {
+      setPanelError("新しいファイル名を入力してください。");
+      return;
+    }
+    const finalName = raw.toLowerCase().endsWith(".md") ? raw : `${raw}.md`;
+    setPanelError(null);
+
+    try {
+      const renamed = await window.stolow.renameMarkdownFile(
+        project.rootPath,
+        renameModal.file.relativePath,
+        finalName
+      );
+      setRenameModal(null);
+      const wasActive = activeFile?.relativePath === renameModal.file.relativePath;
+      await refreshProject(project.rootPath, wasActive ? renamed : activeFile);
+      if (wasActive) setActiveFile(renamed);
+      setStatusMessage(`${renameModal.file.relativePath} を ${renamed.relativePath} にリネームしました。`);
+    } catch (error) {
+      console.error(error);
+      setPanelError(error instanceof Error ? error.message : "リネームに失敗しました。");
+    }
+  }, [activeFile, isDirty, project, refreshProject, renameModal]);
 
   const submitNewFile = useCallback(async (): Promise<void> => {
     if (!project || !newFileModal) return;
@@ -720,7 +1025,13 @@ export function App(): JSX.Element {
 
   // モーダル表示中はフォーカスをモーダル内に閉じ込める
   useEffect(() => {
-    const modal = previewPlan ? previewModalRef.current : newFileModal ? newFileModalRef.current : null;
+    const modal = previewPlan
+      ? previewModalRef.current
+      : newFileModal
+        ? newFileModalRef.current
+        : renameModal
+          ? renameModalRef.current
+          : null;
     if (!modal) return;
 
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -745,6 +1056,7 @@ export function App(): JSX.Element {
         event.stopPropagation();
         if (previewPlan) setPreviewPlan(null);
         else if (newFileModal) setNewFileModal(null);
+        else if (renameModal) setRenameModal(null);
         return;
       }
       if (event.key !== "Tab") return;
@@ -774,7 +1086,7 @@ export function App(): JSX.Element {
       modal.removeEventListener("keydown", onKeyDown);
       previouslyFocused?.focus?.();
     };
-  }, [newFileModal, previewPlan]);
+  }, [newFileModal, previewPlan, renameModal]);
 
   useEffect(() => {
     const isEditableElement = (target: EventTarget | null): boolean => {
@@ -787,8 +1099,13 @@ export function App(): JSX.Element {
       const mod = navigator.platform.includes("Mac") ? event.metaKey : event.ctrlKey;
       if (!mod && event.key !== "Escape") return;
 
-      // Escape: close preview modal
+      // Escape: cancel generation or close preview modal
       if (event.key === "Escape") {
+        if (isGenerating) {
+          event.preventDefault();
+          cancelGeneration();
+          return;
+        }
         if (previewPlan) {
           event.preventDefault();
           setPreviewPlan(null);
@@ -853,7 +1170,9 @@ export function App(): JSX.Element {
     aiPanelOpen,
     applySuggestion,
     buildApplyPlan,
+    cancelGeneration,
     generate,
+    isGenerating,
     previewPlan,
     suggestionResult?.suggestions
   ]);
@@ -868,48 +1187,12 @@ export function App(): JSX.Element {
           isOpening={isOpening}
           isSaving={isSaving}
           onCreateMarkdown={createNewMarkdown}
-          onDeleteFile={(file) => {
-            if (!project) return;
-            const deletingActive = activeFile?.relativePath === file.relativePath;
-            const hasUnsaved = deletingActive && isDirty;
-            const message = hasUnsaved
-              ? `未保存の変更があります。\n\n${file.relativePath}\nを削除しますか？`
-              : `${file.relativePath}\nを削除しますか？`;
-
-            if (!window.confirm(message)) return;
-
-            void (async () => {
-              try {
-                await window.stolow.deleteMarkdownFile(project.rootPath, file.relativePath);
-                if (deletingActive) {
-                  setActiveFile(null);
-                  setDocumentText("");
-                  setLastSavedText("");
-                  setSelection(EMPTY_SELECTION);
-                }
-                await refreshProject(project.rootPath, null);
-                setStatusMessage(`${file.relativePath} を削除しました。`);
-                setPanelError(null);
-              } catch (error) {
-                console.error(error);
-                setPanelError(error instanceof Error ? error.message : "ファイル削除に失敗しました。");
-              }
-            })();
-          }}
-          onDuplicateFile={(file) => {
-            if (!project) return;
-            void (async () => {
-              try {
-                const duplicated = await window.stolow.duplicateMarkdownFile(project.rootPath, file.relativePath);
-                await refreshProject(project.rootPath, duplicated);
-                setStatusMessage(`${file.relativePath} を複製しました。`);
-                setPanelError(null);
-              } catch (error) {
-                console.error(error);
-                setPanelError(error instanceof Error ? error.message : "ファイル複製に失敗しました。");
-              }
-            })();
-          }}
+          onDeleteFile={handleDeleteFile}
+          onDuplicateFile={handleDuplicateFile}
+          onRequestNativeMenu={window.stolow ? handleRequestNativeMenu : undefined}
+          onOpenProjectAtPath={window.stolow ? openProjectAtPath : undefined}
+          onRevealProject={window.stolow ? revealProject : undefined}
+          recentProjectPaths={recentProjectPaths}
           onFileSelect={(file) => {
             if (isDirty) {
               setStatusMessage("未保存の変更があります。必要なら保存してから別ファイルを開いてください。");
@@ -1040,11 +1323,85 @@ export function App(): JSX.Element {
           editable={activeFile !== null}
         />
         <div className="statusbar">
-          <span>{statusMessage}</span>
-          <span>
-            {`${MODE_LABELS[mode]} · ${PROFILE_LABELS[modelProfile]}`}
-            {selectedChars > 0 ? ` · ${selectedChars.toLocaleString()} 文字を選択中` : ""}
-          </span>
+          <span className="statusbar-message">{statusMessage}</span>
+          <div className="statusbar-stats">
+            <button
+              ref={statusModeBtnRef}
+              aria-haspopup="menu"
+              aria-expanded={statusPopover === "mode"}
+              className="statusbar-chip"
+              onClick={() => setStatusPopover((cur) => (cur === "mode" ? null : "mode"))}
+              title="モードを切替"
+              type="button"
+            >
+              <span className="statusbar-chip-label">Mode</span>
+              <span>{MODE_LABELS[mode]}</span>
+            </button>
+            <button
+              ref={statusModelBtnRef}
+              aria-haspopup="menu"
+              aria-expanded={statusPopover === "model"}
+              className="statusbar-chip"
+              onClick={() => setStatusPopover((cur) => (cur === "model" ? null : "model"))}
+              title="モデルプロファイルを切替"
+              type="button"
+            >
+              <span className="statusbar-chip-label">Model</span>
+              <span>{PROFILE_LABELS[modelProfile]}</span>
+            </button>
+            <span className="statusbar-divider" aria-hidden />
+            <span title={`カーソル位置 L${cursorPosition.line} C${cursorPosition.column}`}>
+              {`L${cursorPosition.line}:${cursorPosition.column}`}
+            </span>
+            {selectedChars > 0 ? (
+              <span>{`選択 ${selectedChars.toLocaleString()} 文字`}</span>
+            ) : null}
+            {statusPopover ? (
+              <div
+                ref={statusPopoverRef}
+                className="statusbar-popover"
+                role="menu"
+                aria-label={statusPopover === "mode" ? "モード一覧" : "モデルプロファイル一覧"}
+                style={{ right: statusPopover === "mode" ? undefined : 0 }}
+              >
+                {statusPopover === "mode"
+                  ? SUGGESTION_MODES.map((m) => (
+                      <button
+                        key={m}
+                        role="menuitemradio"
+                        aria-checked={m === mode}
+                        className={`statusbar-popover-item${m === mode ? " is-active" : ""}`}
+                        onClick={() => {
+                          setMode(m);
+                          if (settingsDraft) {
+                            void persistSettings({ ...settingsDraft, defaultMode: m });
+                          }
+                          setStatusPopover(null);
+                        }}
+                        type="button"
+                      >
+                        <span>{MODE_LABELS[m]}</span>
+                        <span className="statusbar-popover-hint">{MODE_HINTS[m]}</span>
+                      </button>
+                    ))
+                  : MODEL_PROFILES.map((p) => (
+                      <button
+                        key={p}
+                        role="menuitemradio"
+                        aria-checked={p === modelProfile}
+                        className={`statusbar-popover-item${p === modelProfile ? " is-active" : ""}`}
+                        onClick={() => {
+                          setModelProfile(p);
+                          setStatusPopover(null);
+                        }}
+                        type="button"
+                      >
+                        <span>{PROFILE_LABELS[p]}</span>
+                      </button>
+                    ))}
+              </div>
+            ) : null}
+          </div>
         </div>
       </section>
 
@@ -1129,12 +1486,14 @@ export function App(): JSX.Element {
                 contextFiles={contextFiles}
                 contextSelection={contextSelection}
                 chapterHeadingLevel={chapterHeadingLevel}
+                elapsedSeconds={elapsedSeconds}
                 error={panelError}
                 expectedSuggestionCount={settingsDraft?.suggestionCount ?? 3}
                 isGenerating={isGenerating}
                 mode={mode}
                 modelProfile={modelProfile}
                 onApply={applySuggestion}
+                onCancel={cancelGeneration}
                 onChapterHeadingLevelChange={setChapterHeadingLevel}
                 onContextToggle={(relativePath, nextValue) => {
                   setContextSelection((current) => ({ ...current, [relativePath]: nextValue }));
@@ -1205,14 +1564,25 @@ export function App(): JSX.Element {
                 Esc で閉じる
               </span>
             </div>
-            <div className="modal-grid">
+            <div className="modal-grid" style={{ gridTemplateColumns: "1fr" }}>
               <section className="modal-pane">
-                <h4>Before</h4>
-                <pre>{previewPlan.beforeText}</pre>
-              </section>
-              <section className="modal-pane">
-                <h4>After</h4>
-                <pre>{previewPlan.afterText}</pre>
+                <h4>変更プレビュー（赤=削除 / 緑=追加）</h4>
+                <pre className="diff-pre">
+                  {computeCharDiff(previewPlan.beforeText, previewPlan.afterText).map((chunk, i) => {
+                    if (chunk.type === "same") return <span key={i}>{chunk.text}</span>;
+                    if (chunk.type === "add")
+                      return (
+                        <span key={i} className="diff-add">
+                          {chunk.text}
+                        </span>
+                      );
+                    return (
+                      <span key={i} className="diff-del">
+                        {chunk.text}
+                      </span>
+                    );
+                  })}
+                </pre>
               </section>
             </div>
             <div className="modal-footer">
@@ -1289,6 +1659,62 @@ export function App(): JSX.Element {
               </button>
               <button className="primary-action" onClick={() => void submitNewFile()} type="button">
                 作成
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {renameModal ? (
+        <div
+          ref={renameModalRef}
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="ファイル名を変更"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setRenameModal(null);
+          }}
+        >
+          <div className="modal">
+            <div className="modal-header">
+              <div>
+                <h3>名前を変更</h3>
+                <p>{renameModal.file.relativePath}</p>
+              </div>
+              <span className="modal-esc-hint" aria-hidden>
+                Esc で閉じる
+              </span>
+            </div>
+            <div className="modal-grid" style={{ gridTemplateColumns: "1fr" }}>
+              <section className="modal-pane">
+                <h4>新しい名前</h4>
+                <div className="new-file-input-row">
+                  <span className="new-file-prefix" aria-hidden>
+                    {(renameModal.file.kind === "manuscript" ? "manuscript/" : renameModal.file.kind === "context" ? "context/" : "")}
+                  </span>
+                  <input
+                    autoFocus
+                    className="select-input new-file-input"
+                    value={renameModal.value}
+                    onChange={(e) =>
+                      setRenameModal((cur) => (cur ? { ...cur, value: e.target.value } : cur))
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void submitRename();
+                      if (e.key === "Escape") setRenameModal(null);
+                    }}
+                    placeholder="例: 02-first-meeting.md"
+                    spellCheck={false}
+                  />
+                </div>
+              </section>
+            </div>
+            <div className="modal-footer">
+              <button className="chip" onClick={() => setRenameModal(null)} type="button">
+                キャンセル
+              </button>
+              <button className="primary-action" onClick={() => void submitRename()} type="button">
+                変更
               </button>
             </div>
           </div>
@@ -1554,12 +1980,14 @@ interface SuggestionPanelBodyProps {
   contextFiles: ProjectFile[];
   contextSelection: Record<string, boolean>;
   chapterHeadingLevel: 0 | 1 | 2;
+  elapsedSeconds: number;
   error: string | null;
   expectedSuggestionCount: number;
   isGenerating: boolean;
   mode: SuggestionMode;
   modelProfile: ModelProfile;
   onApply: (candidate: SuggestionCandidate) => void;
+  onCancel: () => void;
   onPreview: (candidate: SuggestionCandidate) => void;
   onGenerate: () => void;
   onChapterHeadingLevelChange: (value: 0 | 1 | 2) => void;
@@ -1578,12 +2006,14 @@ function SuggestionPanelBody({
   contextFiles,
   contextSelection,
   chapterHeadingLevel,
+  elapsedSeconds,
   error,
   expectedSuggestionCount,
   isGenerating,
   mode,
   modelProfile,
   onApply,
+  onCancel,
   onPreview,
   onGenerate,
   onChapterHeadingLevelChange,
@@ -1601,121 +2031,129 @@ function SuggestionPanelBody({
       ? `モデルは ${result.suggestions.length} 件のみ返しました（期待 ${expectedSuggestionCount} 件）。`
       : null;
 
+  const selectedContextCount = Object.values(contextSelection).filter(Boolean).length;
+  const chapterLevelLabel =
+    chapterHeadingLevel === 1 ? "#（章）" : chapterHeadingLevel === 2 ? "##（節）" : "OFF";
+
   return (
-    <>
-      <fieldset className="control-block control-fieldset">
-        <legend className="control-legend">モード</legend>
-        <div className="mode-grid">
-          {SUGGESTION_MODES.map((item) => (
-            <button
-              aria-pressed={item === mode}
-              className={item === mode ? "chip active" : "chip"}
-              disabled={controlsLocked}
-              key={item}
-              onClick={() => onModeChange(item)}
-              title={MODE_HINTS[item]}
-              type="button"
-            >
-              {MODE_LABELS[item]}
-            </button>
-          ))}
-        </div>
-      </fieldset>
-
-      <fieldset className="control-block control-fieldset">
-        <legend className="control-legend">参照コンテキスト</legend>
-        {contextFiles.length === 0 ? (
-          <div className="empty-list">context/ に Markdown がありません</div>
-        ) : (
-          contextFiles.map((file) => (
-            <label className="toggle-row" key={file.relativePath}>
-              <input
-                checked={contextSelection[file.relativePath] ?? false}
+    <div className="ai-panel-body">
+      <div className="ai-panel-scroll">
+        <fieldset className="control-block control-fieldset">
+          <legend className="control-legend">モード</legend>
+          <div className="mode-grid">
+            {SUGGESTION_MODES.map((item) => (
+              <button
+                aria-pressed={item === mode}
+                className={item === mode ? "chip active" : "chip"}
                 disabled={controlsLocked}
-                onChange={(event) => onContextToggle(file.relativePath, event.target.checked)}
-                type="checkbox"
-              />
-              <span>{file.relativePath}</span>
+                key={item}
+                onClick={() => onModeChange(item)}
+                title={MODE_HINTS[item]}
+                type="button"
+              >
+                {MODE_LABELS[item]}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset className="control-block control-fieldset">
+          <legend className="control-legend">モデル</legend>
+          <div className="segmented" role="presentation">
+            {MODEL_PROFILES.map((profile) => (
+              <button
+                aria-pressed={profile === modelProfile}
+                className={profile === modelProfile ? "active" : ""}
+                disabled={controlsLocked}
+                key={profile}
+                onClick={() => onModelProfileChange(profile)}
+                type="button"
+              >
+                {PROFILE_LABELS[profile]}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
+        <details className="control-details">
+          <summary>
+            <span>参照コンテキスト</span>
+            <span className="control-details-meta">
+              {selectedContextCount > 0
+                ? `${selectedContextCount} ファイル選択`
+                : contextFiles.length === 0
+                  ? "なし"
+                  : "未選択"}
+            </span>
+          </summary>
+          <div className="control-details-body">
+            {contextFiles.length === 0 ? (
+              <div className="empty-list">context/ に Markdown がありません</div>
+            ) : (
+              contextFiles.map((file) => (
+                <label className="toggle-row" key={file.relativePath}>
+                  <input
+                    checked={contextSelection[file.relativePath] ?? false}
+                    disabled={controlsLocked}
+                    onChange={(event) => onContextToggle(file.relativePath, event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span>{file.relativePath}</span>
+                </label>
+              ))
+            )}
+          </div>
+        </details>
+
+        <details className="control-details">
+          <summary>
+            <span>章コンテキスト</span>
+            <span className="control-details-meta">{chapterLevelLabel}</span>
+          </summary>
+          <div className="control-details-body">
+            <label className="settings-input">
+              <span>カーソル位置からの単位</span>
+              <select
+                className="select-input"
+                disabled={controlsLocked}
+                value={String(chapterHeadingLevel)}
+                onChange={(e) =>
+                  onChapterHeadingLevelChange((Number(e.target.value) as 0 | 1 | 2) ?? 0)
+                }
+              >
+                <option value="0">OFF</option>
+                <option value="1">#（章）</option>
+                <option value="2">##（節）</option>
+              </select>
             </label>
-          ))
-        )}
-      </fieldset>
+          </div>
+        </details>
 
-      <fieldset className="control-block control-fieldset">
-        <legend className="control-legend">章コンテキスト（カーソル位置）</legend>
-        <label className="settings-input">
-          <span>単位</span>
-          <select
-            className="select-input"
-            disabled={controlsLocked}
-            value={String(chapterHeadingLevel)}
-            onChange={(e) => onChapterHeadingLevelChange((Number(e.target.value) as 0 | 1 | 2) ?? 0)}
-          >
-            <option value="0">OFF</option>
-            <option value="1">#（章）</option>
-            <option value="2">##（節）</option>
-          </select>
-        </label>
-      </fieldset>
+        {error ? (
+          <div className="error-box" role="alert">
+            <AlertCircle aria-hidden size={17} />
+            <span>{error}</span>
+          </div>
+        ) : null}
 
-      <fieldset className="control-block control-fieldset">
-        <legend className="control-legend">モデル</legend>
-        <div className="segmented" role="presentation">
-          {MODEL_PROFILES.map((profile) => (
-            <button
-              aria-pressed={profile === modelProfile}
-              className={profile === modelProfile ? "active" : ""}
-              disabled={controlsLocked}
-              key={profile}
-              onClick={() => onModelProfileChange(profile)}
-              type="button"
-            >
-              {PROFILE_LABELS[profile]}
-            </button>
-          ))}
-        </div>
-      </fieldset>
+        {shortCount ? (
+          <div className="hint-box" role="status">
+            {shortCount}
+          </div>
+        ) : null}
 
-      <button
-        className="generate-button"
-        disabled={!activeFile || !settings || isGenerating}
-        onClick={onGenerate}
-        type="button"
-      >
-        {isGenerating ? (
-          <Loader2 aria-hidden className="spin" size={18} />
-        ) : (
-          <Sparkles aria-hidden size={18} />
-        )}
-        {isGenerating
-          ? "生成中…"
-          : selectedChars > 0
-            ? "リライト候補を生成"
-            : `次段落を ${expectedSuggestionCount} 件生成`}
-      </button>
-
-      {isGenerating ? (
-        <div className="generating-hint" role="status">
-          <Loader2 className="spin" size={16} aria-hidden />
-          <span>Ollama から応答を待っています。長いモデルは数分かかることがあります。</span>
-        </div>
-      ) : null}
-
-      {error ? (
-        <div className="error-box" role="alert">
-          <AlertCircle aria-hidden size={17} />
-          <span>{error}</span>
-        </div>
-      ) : null}
-
-      {shortCount ? (
-        <div className="hint-box" role="status">
-          {shortCount}
-        </div>
-      ) : null}
-
-      <div className={`suggestion-list${isGenerating ? " is-generating" : ""}`}>
-        {result?.suggestions.map((candidate, idx) => (
+        <div className={`suggestion-list${isGenerating ? " is-generating" : ""}`}>
+          {isGenerating
+            ? Array.from({ length: expectedSuggestionCount }, (_, i) => (
+                <article className="suggestion-card is-skeleton" key={`skeleton-${i}`} aria-hidden>
+                  <div className="suggestion-skeleton-line" style={{ width: "32%" }} />
+                  <div className="suggestion-skeleton-line" style={{ width: "98%" }} />
+                  <div className="suggestion-skeleton-line" style={{ width: "92%" }} />
+                  <div className="suggestion-skeleton-line" style={{ width: "70%" }} />
+                </article>
+              ))
+            : null}
+          {!isGenerating && result?.suggestions.map((candidate, idx) => (
           <article
             className={`suggestion-card${appliedCardId === candidate.id ? " is-applied" : ""}`}
             key={candidate.id}
@@ -1745,14 +2183,49 @@ function SuggestionPanelBody({
             </div>
           </article>
         ))}
-        {!result && !isGenerating ? (
-          <div className="empty-suggestions">
-            <Sparkles aria-hidden size={16} />
-            <span>候補はここに表示されます。気に入ったものだけ「本文に反映」してください。</span>
+          {!result && !isGenerating ? (
+            <div className="empty-suggestions">
+              <Sparkles aria-hidden size={16} />
+              <span>候補はここに表示されます。気に入ったものだけ「本文に反映」してください。</span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="ai-panel-footer">
+        {isGenerating ? (
+          <div className="generating-hint" role="status">
+            <Loader2 className="spin" size={16} aria-hidden />
+            <span>
+              Ollama から応答を待っています…
+              <span className="generating-elapsed"> {elapsedSeconds} 秒経過 · Esc で中止</span>
+            </span>
           </div>
         ) : null}
+        {isGenerating ? (
+          <button
+            className="generate-button is-cancel"
+            onClick={onCancel}
+            type="button"
+          >
+            <Loader2 aria-hidden className="spin" size={18} />
+            生成を中止
+          </button>
+        ) : (
+          <button
+            className="generate-button"
+            disabled={!activeFile || !settings}
+            onClick={onGenerate}
+            type="button"
+          >
+            <Sparkles aria-hidden size={18} />
+            {selectedChars > 0
+              ? "リライト候補を生成"
+              : `次段落を ${expectedSuggestionCount} 件生成`}
+          </button>
+        )}
       </div>
-    </>
+    </div>
   );
 }
 

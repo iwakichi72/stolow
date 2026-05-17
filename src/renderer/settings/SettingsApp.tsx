@@ -1,14 +1,26 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Loader2, Save } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertCircle, Check } from "lucide-react";
 import type { ProjectSnapshot, StolowAppSettings, StolowSettings } from "../../shared/types";
+
+type SettingsTab = "general" | "connection";
 
 export function SettingsApp(): JSX.Element {
   const [project, setProject] = useState<ProjectSnapshot | null>(null);
-  const [projectSettingsDraft, setProjectSettingsDraft] = useState<StolowSettings | null>(null);
-  const [appSettingsDraft, setAppSettingsDraft] = useState<StolowAppSettings | null>(null);
+  const [projectSettings, setProjectSettings] = useState<StolowSettings | null>(null);
+  const [appSettings, setAppSettings] = useState<StolowAppSettings | null>(null);
   const [status, setStatus] = useState<string>("読み込み中…");
   const [error, setError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+  const [tab, setTab] = useState<SettingsTab>("general");
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const isMac =
+      typeof navigator !== "undefined" && navigator.platform.toLowerCase().includes("mac");
+    if (!isMac) return;
+    document.documentElement.classList.add("macos-vibrancy");
+    return () => document.documentElement.classList.remove("macos-vibrancy");
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -18,15 +30,19 @@ export function SettingsApp(): JSX.Element {
           setError("Electron のプリロードが読み込まれていません。");
           return;
         }
-        const [appSettings, current] = await Promise.all([
+        const [current, currentProject] = await Promise.all([
           window.stolow.getAppSettings(),
           window.stolow.getCurrentProjectSnapshot()
         ]);
         if (cancelled) return;
-        setAppSettingsDraft(appSettings);
-        setProject(current);
-        setProjectSettingsDraft(current?.settings ?? null);
-        setStatus(current ? `プロジェクト: ${current.name}` : "プロジェクト未選択（メイン画面で Open してください）");
+        setAppSettings(current);
+        setProject(currentProject);
+        setProjectSettings(currentProject?.settings ?? null);
+        setStatus(
+          currentProject
+            ? `プロジェクト: ${currentProject.name}`
+            : "プロジェクト未選択（メイン画面で Open してください）"
+        );
       } catch (e) {
         console.error(e);
         if (!cancelled) setError(e instanceof Error ? e.message : "設定の読み込みに失敗しました。");
@@ -37,36 +53,50 @@ export function SettingsApp(): JSX.Element {
     };
   }, []);
 
-  const canEditProjectSettings = Boolean(project && projectSettingsDraft);
+  const flashToast = useCallback((message: string): void => {
+    setToast(message);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 1800);
+  }, []);
 
-  const hasChanges = useMemo(() => {
-    if (!project) return false;
-    // project settings: 保存は blur ではなく明示ボタンで行うため、単純比較で十分
-    return projectSettingsDraft !== null;
-  }, [project, projectSettingsDraft]);
+  useEffect(() => () => {
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+  }, []);
 
-  const saveAll = useCallback(async (): Promise<void> => {
-    setError(null);
-    if (!window.stolow) return;
-    if (!appSettingsDraft) return;
-
-    setIsSaving(true);
-    try {
-      await window.stolow.updateAppSettings(appSettingsDraft);
-      if (project && projectSettingsDraft) {
-        await window.stolow.updateSettings(project.rootPath, projectSettingsDraft);
+  const persistAppSettings = useCallback(
+    async (next: StolowAppSettings): Promise<void> => {
+      if (!window.stolow) return;
+      setAppSettings(next);
+      try {
+        const saved = await window.stolow.updateAppSettings(next);
+        setAppSettings(saved);
+        flashToast("設定を保存しました");
+      } catch (e) {
+        console.error(e);
+        setError(e instanceof Error ? e.message : "アプリ設定の保存に失敗しました。");
       }
-      setStatus("保存しました。");
-    } catch (e) {
-      console.error(e);
-      setError(e instanceof Error ? e.message : "保存に失敗しました。");
-    } finally {
-      setIsSaving(false);
-    }
-  }, [appSettingsDraft, project, projectSettingsDraft]);
+    },
+    [flashToast]
+  );
+
+  const persistProjectSettings = useCallback(
+    async (next: StolowSettings): Promise<void> => {
+      if (!window.stolow || !project) return;
+      setProjectSettings(next);
+      try {
+        const saved = await window.stolow.updateSettings(project.rootPath, next);
+        setProjectSettings(saved);
+        flashToast("設定を保存しました");
+      } catch (e) {
+        console.error(e);
+        setError(e instanceof Error ? e.message : "プロジェクト設定の保存に失敗しました。");
+      }
+    },
+    [flashToast, project]
+  );
 
   return (
-    <main className="app-shell">
+    <main className="app-shell sidebar-closed settings-shell">
       <section className="editor-pane" aria-label="Settings window">
         <div className="editor-topbar">
           <div className="document-title">
@@ -74,91 +104,118 @@ export function SettingsApp(): JSX.Element {
             <span className="document-path">{status}</span>
           </div>
           <div className="document-meta">
-            <button
-              className="icon-button"
-              disabled={isSaving || !appSettingsDraft || Boolean(project && !projectSettingsDraft)}
-              onClick={() => void saveAll()}
-              title="保存"
-              type="button"
+            <div
+              className="panel-tabs panel-tabs-multi"
+              role="tablist"
+              aria-label="設定カテゴリ"
             >
-              {isSaving ? <Loader2 aria-hidden className="spin" size={16} /> : <Save aria-hidden size={16} />}
-            </button>
+              <button
+                aria-selected={tab === "general"}
+                className={tab === "general" ? "active" : ""}
+                onClick={() => setTab("general")}
+                role="tab"
+                type="button"
+              >
+                全般
+              </button>
+              <button
+                aria-selected={tab === "connection"}
+                className={tab === "connection" ? "active" : ""}
+                onClick={() => setTab("connection")}
+                role="tab"
+                type="button"
+              >
+                接続
+              </button>
+            </div>
           </div>
         </div>
 
-        <div style={{ padding: 18, overflow: "auto" }}>
+        <div className="settings-content">
           {error ? (
-            <div className="error-box" role="alert" style={{ marginBottom: 14 }}>
+            <div className="error-box" role="alert">
               <AlertCircle aria-hidden size={17} />
               <span>{error}</span>
             </div>
           ) : null}
 
-          {appSettingsDraft ? (
-            <details className="settings-box" open>
-              <summary>アプリ設定</summary>
-              <label className="toggle-row">
-                <input
-                  checked={appSettingsDraft.autoCreateProjectStructure}
-                  onChange={(e) =>
-                    setAppSettingsDraft((cur) => (cur ? { ...cur, autoCreateProjectStructure: e.target.checked } : cur))
-                  }
-                  type="checkbox"
-                />
-                <span>プロジェクトの `manuscript/` と `context/` を自動生成する</span>
-              </label>
-              <div className="empty-list">
+          {tab === "general" ? (
+            <section className="settings-section">
+              <h3 className="settings-section-title">全般</h3>
+              {appSettings ? (
+                <label className="toggle-row">
+                  <input
+                    checked={appSettings.autoCreateProjectStructure}
+                    onChange={(e) =>
+                      void persistAppSettings({
+                        ...appSettings,
+                        autoCreateProjectStructure: e.target.checked
+                      })
+                    }
+                    type="checkbox"
+                  />
+                  <span>プロジェクトの `manuscript/` と `context/` を自動生成する</span>
+                </label>
+              ) : (
+                <div className="empty-list">アプリ設定を読み込めませんでした。</div>
+              )}
+              <p className="settings-hint">
                 OFF の場合、フォルダを作らずに開きます（ファイルが無い場合は手動で追加してください）。
-              </div>
-            </details>
+              </p>
+            </section>
           ) : (
-            <div className="empty-list">アプリ設定を読み込めませんでした。</div>
+            <section className="settings-section">
+              <h3 className="settings-section-title">接続とモデル</h3>
+              {!project || !projectSettings ? (
+                <div className="empty-list">
+                  プロジェクトが選択されていません。メイン画面でプロジェクトを開くと、このウィンドウに反映されます。
+                </div>
+              ) : (
+                <div className="settings-grid">
+                  <SettingsInput
+                    label="Ollama URL"
+                    value={projectSettings.ollamaUrl}
+                    placeholder="http://localhost:11434"
+                    onCommit={(value) =>
+                      void persistProjectSettings({ ...projectSettings, ollamaUrl: value })
+                    }
+                  />
+                  <SettingsInput
+                    label="Default モデル"
+                    value={projectSettings.defaultModel}
+                    onCommit={(value) =>
+                      void persistProjectSettings({ ...projectSettings, defaultModel: value })
+                    }
+                  />
+                  <SettingsInput
+                    label="Quick モデル"
+                    value={projectSettings.quickModel}
+                    onCommit={(value) =>
+                      void persistProjectSettings({ ...projectSettings, quickModel: value })
+                    }
+                  />
+                  <SettingsInput
+                    label="Quality モデル"
+                    value={projectSettings.qualityModel}
+                    onCommit={(value) =>
+                      void persistProjectSettings({ ...projectSettings, qualityModel: value })
+                    }
+                  />
+                </div>
+              )}
+              <p className="settings-hint">
+                入力後に他の項目へ移動すると自動保存します（フォーカスを外したタイミング）。
+              </p>
+            </section>
           )}
-
-          <details className="settings-box" open style={{ marginTop: 10 }}>
-            <summary>接続とモデル名</summary>
-            {!canEditProjectSettings ? (
-              <div className="empty-list">
-                プロジェクトが選択されていません。メイン画面でプロジェクトを開くと、このウィンドウに反映されます。
-              </div>
-            ) : null}
-
-            {projectSettingsDraft ? (
-              <>
-                <SettingsInput
-                  label="Ollama URL"
-                  value={projectSettingsDraft.ollamaUrl}
-                  onChange={(value) => setProjectSettingsDraft((cur) => (cur ? { ...cur, ollamaUrl: value } : cur))}
-                />
-                <SettingsInput
-                  label="Default"
-                  value={projectSettingsDraft.defaultModel}
-                  onChange={(value) =>
-                    setProjectSettingsDraft((cur) => (cur ? { ...cur, defaultModel: value } : cur))
-                  }
-                />
-                <SettingsInput
-                  label="Quick"
-                  value={projectSettingsDraft.quickModel}
-                  onChange={(value) =>
-                    setProjectSettingsDraft((cur) => (cur ? { ...cur, quickModel: value } : cur))
-                  }
-                />
-                <SettingsInput
-                  label="Quality"
-                  value={projectSettingsDraft.qualityModel}
-                  onChange={(value) =>
-                    setProjectSettingsDraft((cur) => (cur ? { ...cur, qualityModel: value } : cur))
-                  }
-                />
-              </>
-            ) : null}
-
-            {!hasChanges ? null : (
-              <div className="empty-list">右上の保存ボタンで保存します。</div>
-            )}
-          </details>
         </div>
+
+        {toast ? (
+          <div className="settings-toast" role="status" aria-live="polite">
+            <Check aria-hidden size={14} />
+            <span>{toast}</span>
+          </div>
+        ) : null}
       </section>
     </main>
   );
@@ -167,11 +224,13 @@ export function SettingsApp(): JSX.Element {
 function SettingsInput({
   label,
   value,
-  onChange
+  placeholder,
+  onCommit
 }: {
   label: string;
   value: string;
-  onChange: (value: string) => void;
+  placeholder?: string;
+  onCommit: (value: string) => void;
 }): JSX.Element {
   const [draft, setDraft] = useState(value);
 
@@ -184,15 +243,23 @@ function SettingsInput({
       <span>{label}</span>
       <input
         autoComplete="off"
+        placeholder={placeholder}
         spellCheck={false}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => {
           const next = draft.trim();
-          if (next && next !== value) onChange(next);
+          if (next && next !== value) onCommit(next);
+          else setDraft(value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
+          if (e.key === "Escape") {
+            setDraft(value);
+            (e.currentTarget as HTMLInputElement).blur();
+          }
         }}
       />
     </label>
   );
 }
-

@@ -33,6 +33,8 @@ export interface StolowAppSettings {
   autoCreateProjectStructure: boolean;
   /** 最後に開いていたプロジェクト（フォルダ） */
   lastOpenedProjectPath?: string;
+  /** 最近開いたプロジェクト（新しい順、最大 8 件） */
+  recentProjectPaths?: string[];
 }
 
 export interface ProjectFile {
@@ -144,6 +146,14 @@ export interface ProjectStats {
   manuscriptFileCount: number;
 }
 
+export type FileContextMenuAction = "duplicate" | "delete" | "rename" | null;
+
+export interface FileContextMenuPayload {
+  relativePath: string;
+  name: string;
+  kind: ProjectFileKind;
+}
+
 export type MenuAction =
   | "openProject"
   | "newManuscript"
@@ -161,6 +171,8 @@ export type MenuAction =
 export interface StolowApi {
   openProject: () => Promise<ProjectSnapshot | null>;
   openLastProject: () => Promise<ProjectSnapshot | null>;
+  openProjectAtPath: (projectPath: string) => Promise<ProjectSnapshot | null>;
+  revealProjectInFolder: (projectPath: string) => Promise<void>;
   refreshProject: (projectPath: string) => Promise<ProjectSnapshot>;
   getCurrentProjectSnapshot: () => Promise<ProjectSnapshot | null>;
   openSettingsWindow: () => Promise<void>;
@@ -169,10 +181,20 @@ export interface StolowApi {
   createMarkdownFile: (projectPath: string, relativePath: string) => Promise<ProjectFile>;
   deleteMarkdownFile: (projectPath: string, relativePath: string) => Promise<void>;
   duplicateMarkdownFile: (projectPath: string, relativePath: string) => Promise<ProjectFile>;
+  renameMarkdownFile: (
+    projectPath: string,
+    relativePath: string,
+    nextRelativePath: string
+  ) => Promise<ProjectFile>;
+  showFileContextMenu: (
+    projectPath: string,
+    payload: FileContextMenuPayload
+  ) => Promise<FileContextMenuAction>;
   getAppSettings: () => Promise<StolowAppSettings>;
   updateAppSettings: (settings: StolowAppSettings) => Promise<StolowAppSettings>;
   updateSettings: (projectPath: string, settings: StolowSettings) => Promise<StolowSettings>;
   generateSuggestions: (payload: GenerateSuggestionsPayload) => Promise<GenerateSuggestionsResult>;
+  cancelGeneration: () => void;
   searchProject: (projectPath: string, options: ProjectSearchOptions) => Promise<ProjectSearchResult>;
   replacePreview: (payload: ProjectReplacePreviewPayload) => Promise<ProjectReplacePreviewResult>;
   replaceApply: (payload: ProjectReplaceApplyPayload) => Promise<ProjectReplaceApplyResult>;

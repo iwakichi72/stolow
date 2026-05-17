@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  FileContextMenuPayload,
   GenerateSuggestionsPayload,
   MenuAction,
   ProjectReplaceApplyPayload,
@@ -13,6 +14,10 @@ import type {
 const api: StolowApi = {
   openProject: () => ipcRenderer.invoke("project:open"),
   openLastProject: () => ipcRenderer.invoke("project:openLast"),
+  openProjectAtPath: (projectPath: string) =>
+    ipcRenderer.invoke("project:openAtPath", projectPath),
+  revealProjectInFolder: (projectPath: string) =>
+    ipcRenderer.invoke("shell:revealProject", projectPath),
   refreshProject: (projectPath: string) => ipcRenderer.invoke("project:refresh", projectPath),
   getCurrentProjectSnapshot: () => ipcRenderer.invoke("project:getCurrentSnapshot"),
   openSettingsWindow: () => ipcRenderer.invoke("window:openSettings"),
@@ -26,11 +31,18 @@ const api: StolowApi = {
     ipcRenderer.invoke("file:delete", projectPath, relativePath),
   duplicateMarkdownFile: (projectPath: string, relativePath: string) =>
     ipcRenderer.invoke("file:duplicate", projectPath, relativePath),
+  renameMarkdownFile: (projectPath: string, relativePath: string, nextRelativePath: string) =>
+    ipcRenderer.invoke("file:rename", projectPath, relativePath, nextRelativePath),
+  showFileContextMenu: (projectPath: string, payload: FileContextMenuPayload) =>
+    ipcRenderer.invoke("file:showContextMenu", projectPath, payload),
   getAppSettings: () => ipcRenderer.invoke("appSettings:get"),
   updateAppSettings: (settings: StolowAppSettings) => ipcRenderer.invoke("appSettings:update", settings),
   updateSettings: (projectPath: string, settings: StolowSettings) =>
     ipcRenderer.invoke("settings:update", projectPath, settings),
   generateSuggestions: (payload: GenerateSuggestionsPayload) => ipcRenderer.invoke("ai:generate", payload),
+  cancelGeneration: () => {
+    ipcRenderer.send("ai:cancel");
+  },
   searchProject: (projectPath: string, options: ProjectSearchOptions) =>
     ipcRenderer.invoke("project:search", projectPath, options),
   replacePreview: (payload: ProjectReplacePreviewPayload) =>

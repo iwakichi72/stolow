@@ -20,7 +20,8 @@ export async function generateSuggestions(input: GenerateSuggestionsInput): Prom
     ollamaUrl: settings.ollamaUrl,
     model: usedModel,
     messages,
-    timeoutMs: settings.requestTimeoutMs
+    timeoutMs: settings.requestTimeoutMs,
+    signal: input.signal
   });
 
   const parsed = parseSuggestions(raw, settings.maxParagraphChars);

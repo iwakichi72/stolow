@@ -63,7 +63,7 @@ describe("ProjectSidebar context menu", () => {
       />
     );
 
-    const row = screen.getByRole("button", { name: "01.md" });
+    const row = screen.getByRole("treeitem", { name: /01\.md/ });
     fireEvent.contextMenu(row, { clientX: 120, clientY: 80 });
 
     const menu = screen.getByRole("menu", { name: "ファイル操作" });
@@ -108,7 +108,7 @@ describe("ProjectSidebar context menu", () => {
       />
     );
 
-    const row = screen.getByRole("button", { name: "01.md" });
+    const row = screen.getByRole("treeitem", { name: /01\.md/ });
     fireEvent.contextMenu(row, { clientX: 120, clientY: 80 });
     expect(screen.getByRole("menu", { name: "ファイル操作" })).toBeInTheDocument();
 
@@ -147,7 +147,7 @@ describe("ProjectSidebar context menu", () => {
       />
     );
 
-    const row = screen.getByRole("button", { name: "01.md" });
+    const row = screen.getByRole("treeitem", { name: /01\.md/ });
     fireEvent.contextMenu(row, { clientX: 120, clientY: 80 });
     expect(screen.getByRole("menu", { name: "ファイル操作" })).toBeInTheDocument();
 
@@ -184,7 +184,7 @@ describe("ProjectSidebar context menu", () => {
       />
     );
 
-    const row = screen.getByRole("button", { name: "01.md" });
+    const row = screen.getByRole("treeitem", { name: /01\.md/ });
     fireEvent.contextMenu(row, { clientX: 120, clientY: 80 });
     expect(screen.getByRole("menu", { name: "ファイル操作" })).toBeInTheDocument();
 

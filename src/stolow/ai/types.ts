@@ -16,6 +16,7 @@ export type AiErrorCode =
   | "LLM_JSON_INVALID"
   | "EMPTY_SUGGESTIONS"
   | "TIMEOUT"
+  | "CANCELLED"
   | "HTTP_ERROR";
 
 export interface GenerationContext {
@@ -45,6 +46,8 @@ export interface OllamaChatRequest {
   model: string;
   messages: ChatMessage[];
   timeoutMs: number;
+  /** ユーザーが生成中止するための外部キャンセル用シグナル */
+  signal?: AbortSignal;
 }
 
 export interface ParsedSuggestions {
@@ -55,6 +58,7 @@ export interface GenerateSuggestionsInput extends GenerateSuggestionsPayload {
   summaryText?: string;
   notesText?: string;
   chapterText?: string;
+  signal?: AbortSignal;
 }
 
 export { ModelProfile, StolowSettings, SuggestionCandidate, SuggestionMode };

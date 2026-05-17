@@ -2,9 +2,11 @@ import { existsSync, realpathSync } from "node:fs";
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
+  shell,
   type BrowserWindowConstructorOptions,
   type MenuItemConstructorOptions,
   type OpenDialogOptions
@@ -13,6 +15,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
+  FileContextMenuAction,
+  FileContextMenuPayload,
   GenerateSuggestionsPayload,
   MenuAction,
   ProjectFile,
@@ -59,11 +63,16 @@ let currentProjectRoot: string | null = null;
 let mainIsDirty = false;
 /** ユーザーが「破棄して閉じる」を確認済みのとき true。close→destroy のループを避けるため。 */
 let allowMainClose = false;
+/** 現在進行中の AI 生成。ユーザーキャンセル時に abort() するため保持する。 */
+let currentGenerationController: AbortController | null = null;
 
 const DEFAULT_APP_SETTINGS: StolowAppSettings = {
   autoCreateProjectStructure: true,
-  lastOpenedProjectPath: undefined
+  lastOpenedProjectPath: undefined,
+  recentProjectPaths: []
 };
+
+const MAX_RECENT_PROJECTS = 8;
 
 function appSettingsPath(): string {
   return path.join(app.getPath("userData"), "stolow.app-settings.json");
@@ -71,10 +80,18 @@ function appSettingsPath(): string {
 
 async function readAppSettings(): Promise<StolowAppSettings> {
   const raw = await readJsonIfExists<Partial<StolowAppSettings>>(appSettingsPath());
-  return {
+  const merged = {
     ...DEFAULT_APP_SETTINGS,
     ...(raw ?? {})
   };
+  // 旧バージョンの設定では recentProjectPaths が無いので lastOpenedProjectPath から補完する
+  if (
+    (!merged.recentProjectPaths || merged.recentProjectPaths.length === 0) &&
+    merged.lastOpenedProjectPath
+  ) {
+    merged.recentProjectPaths = [merged.lastOpenedProjectPath];
+  }
+  return merged;
 }
 
 async function writeAppSettings(settings: StolowAppSettings): Promise<void> {
@@ -84,9 +101,13 @@ async function writeAppSettings(settings: StolowAppSettings): Promise<void> {
 
 async function persistLastOpenedProjectPath(projectPath: string): Promise<void> {
   const current = await readAppSettings();
+  const previousRecent = current.recentProjectPaths ?? [];
+  const deduped = [projectPath, ...previousRecent.filter((p) => p !== projectPath)];
+  const recentProjectPaths = deduped.slice(0, MAX_RECENT_PROJECTS);
   const next: StolowAppSettings = {
     ...current,
-    lastOpenedProjectPath: projectPath
+    lastOpenedProjectPath: projectPath,
+    recentProjectPaths
   };
   await writeAppSettings(next);
 }
@@ -338,7 +359,8 @@ function openSettingsWindow(): void {
     return;
   }
 
-  settingsWindow = new BrowserWindow({
+  const isMac = process.platform === "darwin";
+  const options: BrowserWindowConstructorOptions = {
     width: 560,
     height: 680,
     minWidth: 480,
@@ -352,7 +374,17 @@ function openSettingsWindow(): void {
       contextIsolation: true,
       nodeIntegration: false
     }
-  });
+  };
+
+  if (isMac) {
+    options.titleBarStyle = "hiddenInset";
+    options.trafficLightPosition = { x: 14, y: 14 };
+    options.vibrancy = "menu";
+    options.visualEffectState = "active";
+    options.backgroundColor = "#00000000";
+  }
+
+  settingsWindow = new BrowserWindow(options);
 
   settingsWindow.on("closed", () => {
     settingsWindow = null;
@@ -414,13 +446,34 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("appSettings:update", async (_event, settings: StolowAppSettings): Promise<StolowAppSettings> => {
+    const current = await readAppSettings();
     const next: StolowAppSettings = {
       autoCreateProjectStructure: settings?.autoCreateProjectStructure !== false,
-      // lastOpenedProjectPath は内部で更新する（ユーザーがここから直接書き換えない想定）
-      lastOpenedProjectPath: (await readAppSettings()).lastOpenedProjectPath
+      // lastOpenedProjectPath / recentProjectPaths は内部で更新する（ユーザーがここから直接書き換えない想定）
+      lastOpenedProjectPath: current.lastOpenedProjectPath,
+      recentProjectPaths: current.recentProjectPaths
     };
     await writeAppSettings(next);
     return next;
+  });
+
+  ipcMain.handle("project:openAtPath", async (_event, rawRoot: string): Promise<ProjectSnapshot | null> => {
+    if (typeof rawRoot !== "string" || !rawRoot) return null;
+    if (!existsSync(rawRoot)) return null;
+    const rootPath = canonicalProjectRoot(rawRoot);
+    const appSettings = await readAppSettings();
+    if (appSettings.autoCreateProjectStructure) {
+      await ensureProject(rootPath);
+    }
+    currentProjectRoot = rootPath;
+    await persistLastOpenedProjectPath(rootPath);
+    return await readProjectSnapshot(rootPath);
+  });
+
+  ipcMain.handle("shell:revealProject", async (_event, rawRoot: string): Promise<void> => {
+    if (typeof rawRoot !== "string" || !rawRoot) return;
+    if (!existsSync(rawRoot)) return;
+    shell.openPath(rawRoot);
   });
 
   ipcMain.handle("project:openLast", async (): Promise<ProjectSnapshot | null> => {
@@ -530,6 +583,113 @@ function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    "file:rename",
+    async (
+      _event,
+      projectPath: string,
+      relativePath: string,
+      nextRelativePath: string
+    ): Promise<ProjectFile> => {
+      try {
+        const rootPath = canonicalProjectRoot(projectPath);
+        const normalizedSource = normalizeNewMarkdownRelativePath(relativePath);
+        const sourcePath = resolveProjectMarkdownPath(rootPath, normalizedSource);
+
+        const sourceDir = path.posix.dirname(toPosix(path.relative(rootPath, sourcePath)));
+        const requested = normalizeNewMarkdownRelativePath(nextRelativePath);
+        // ユーザーがフォルダ指定なしで打った場合は元のフォルダに留める
+        const resolvedRelative = requested.includes("/")
+          ? requested
+          : `${sourceDir}/${requested}`;
+        assertCreatableMarkdownRelativePath(resolvedRelative);
+        const destPath = resolveProjectMarkdownPath(rootPath, resolvedRelative);
+
+        if (sourcePath === destPath) {
+          return {
+            relativePath: toPosix(path.relative(rootPath, sourcePath)),
+            name: path.basename(sourcePath),
+            kind: fileKind(toPosix(path.relative(rootPath, sourcePath)))
+          };
+        }
+        if (await pathExists(destPath)) {
+          throw new Error("同じ名前のファイルが既に存在します。");
+        }
+
+        await fs.mkdir(path.dirname(destPath), { recursive: true });
+        await fs.rename(sourcePath, destPath);
+
+        return {
+          relativePath: toPosix(path.relative(rootPath, destPath)),
+          name: path.basename(destPath),
+          kind: fileKind(toPosix(path.relative(rootPath, destPath)))
+        };
+      } catch (error) {
+        console.error("Failed to rename file", error);
+        if (error instanceof Error && error.message) throw error;
+        throw new Error("ファイルのリネームに失敗しました。");
+      }
+    }
+  );
+
+  ipcMain.handle(
+    "file:showContextMenu",
+    async (
+      _event,
+      projectPath: string,
+      payload: FileContextMenuPayload
+    ): Promise<FileContextMenuAction> => {
+      const rootPath = canonicalProjectRoot(projectPath);
+      const absolutePath = path.join(rootPath, payload.relativePath);
+      const targetWindow = mainWindow ?? undefined;
+
+      return await new Promise<FileContextMenuAction>((resolve) => {
+        let resolved = false;
+        const settle = (action: FileContextMenuAction): void => {
+          if (resolved) return;
+          resolved = true;
+          resolve(action);
+        };
+
+        const menu = Menu.buildFromTemplate([
+          {
+            label: "名前を変更…",
+            click: () => settle("rename")
+          },
+          {
+            label: "複製",
+            click: () => settle("duplicate")
+          },
+          { type: "separator" },
+          {
+            label: "Finder で表示",
+            click: () => {
+              shell.showItemInFolder(absolutePath);
+              settle(null);
+            }
+          },
+          {
+            label: "パスをコピー",
+            click: () => {
+              clipboard.writeText(absolutePath);
+              settle(null);
+            }
+          },
+          { type: "separator" },
+          {
+            label: "削除",
+            click: () => settle("delete")
+          }
+        ]);
+
+        menu.popup({
+          window: targetWindow,
+          callback: () => settle(null)
+        });
+      });
+    }
+  );
+
+  ipcMain.handle(
     "file:duplicate",
     async (_event, projectPath: string, relativePath: string): Promise<ProjectFile> => {
       try {
@@ -569,9 +729,22 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.on("ai:cancel", () => {
+    if (currentGenerationController && !currentGenerationController.signal.aborted) {
+      currentGenerationController.abort();
+    }
+  });
+
   ipcMain.handle(
     "ai:generate",
     async (_event, payload: GenerateSuggestionsPayload) => {
+      // 旧リクエストが残っていたら念のため中止しておく
+      if (currentGenerationController && !currentGenerationController.signal.aborted) {
+        currentGenerationController.abort();
+      }
+      const controller = new AbortController();
+      currentGenerationController = controller;
+
       try {
         if (!payload.projectPath) {
           throw new StolowAiError("PROJECT_NOT_OPEN", "Project is not open.");
@@ -623,11 +796,20 @@ function registerIpcHandlers(): void {
           ...payload,
           summaryText,
           notesText,
-          chapterText
+          chapterText,
+          signal: controller.signal
         });
       } catch (error) {
+        if (error instanceof StolowAiError && error.code === "CANCELLED") {
+          // ユーザーによるキャンセルは UX 上エラー扱いしない。専用のメッセージで返す。
+          throw new Error("CANCELLED");
+        }
         console.error("AI generation failed", error);
         throw new Error(toUserFacingAiMessage(error));
+      } finally {
+        if (currentGenerationController === controller) {
+          currentGenerationController = null;
+        }
       }
     }
   );

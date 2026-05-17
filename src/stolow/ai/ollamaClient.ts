@@ -11,6 +11,12 @@ interface OllamaChatResponse {
 export async function chatWithOllama(request: OllamaChatRequest): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), request.timeoutMs);
+  const externalSignal = request.signal;
+  const onExternalAbort = (): void => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+  }
 
   try {
     const response = await fetch(new URL("/api/chat", request.ollamaUrl), {
@@ -54,11 +60,15 @@ export async function chatWithOllama(request: OllamaChatRequest): Promise<string
     if (error instanceof StolowAiError) throw error;
 
     if (error instanceof Error && error.name === "AbortError") {
+      if (externalSignal?.aborted) {
+        throw new StolowAiError("CANCELLED", "Generation was cancelled.", error);
+      }
       throw new StolowAiError("TIMEOUT", "Ollama request timed out.", error);
     }
 
     throw new StolowAiError("OLLAMA_UNAVAILABLE", "Could not connect to Ollama.", error);
   } finally {
     clearTimeout(timeout);
+    if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
   }
 }
